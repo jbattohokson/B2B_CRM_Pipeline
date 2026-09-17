@@ -14,6 +14,17 @@ Dimensional model + dbt pipeline over B2B CRM data (leads, accounts, opportuniti
 - **Metrics**: Weighted Pipeline, Lead-to-Opportunity Conversion Velocity, Forecast Accuracy %
 - **BI**: Tableau Public, connected directly to `fct_opportunities`
 
+## Environment
+
+Requires **Python 3.13** — `dbt-duckdb`'s dependency chain has no CPython 3.14 wheels yet (same constraint as the `MLB_Live_Agent` project).
+
+```bash
+python3.13 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+cd dbt && DBT_PROFILES_DIR=. ../.venv/bin/dbt debug
+```
+
 ## Repo layout
 
 ```

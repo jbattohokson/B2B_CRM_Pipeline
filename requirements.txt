@@ -1,0 +1,10 @@
+# Requires Python 3.13 — dbt-duckdb's dependency chain doesn't yet have
+# CPython 3.14 wheels (same constraint as ../MLB_Live_Agent/requirements.txt).
+# Install:  python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt
+
+# Data layer
+pandas>=2.0.0
+
+# Warehouse + transform
+duckdb>=0.10.0
+dbt-duckdb>=1.8.0
