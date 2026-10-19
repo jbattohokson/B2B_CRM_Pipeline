@@ -83,12 +83,14 @@ TIER_STAGE_DAYS = {
 # Deal size: lognormal with this median (USD) and sigma, by tier.
 TIER_AMOUNT = {"SMB": (12_000, 0.5), "Mid-Market": (45_000, 0.5), "Enterprise": (150_000, 0.6)}
 
-# Share of reps per selling segment, and annual quota range by segment.
-REP_SEGMENT_WEIGHTS = {"SMB": 0.42, "Mid-Market": 0.33, "Enterprise": 0.25}
+# Share of reps per selling segment, and annual quota range by segment. Quotas are
+# calibrated so a typical rep lands near 80-90% attainment given the segment's deal
+# flow (volume x win rate x deal size per rep), not picked from industry folklore.
+REP_SEGMENT_WEIGHTS = {"SMB": 0.48, "Mid-Market": 0.32, "Enterprise": 0.20}
 REP_QUOTA_RANGE = {
-    "SMB": (450_000, 650_000),
-    "Mid-Market": (700_000, 1_000_000),
-    "Enterprise": (1_100_000, 1_600_000),
+    "SMB": (360_000, 500_000),
+    "Mid-Market": (680_000, 950_000),
+    "Enterprise": (850_000, 1_150_000),
 }
 
 REGIONS = ["NA-East", "NA-West", "EMEA", "APAC"]
@@ -233,7 +235,9 @@ def generate_reps(rng: np.random.Generator, cfg: GeneratorConfig) -> tuple[pd.Da
     )
     traits = {
         rep_id: {
-            "skill": float(np.clip(rng.normal(1.0, 0.12), 0.7, 1.3)),
+            # Applied at all four stage transitions, so it compounds: 0.85..1.15 per stage
+            # becomes roughly 0.5x..1.75x on the overall win rate.
+            "skill": float(np.clip(rng.normal(1.0, 0.06), 0.85, 1.15)),
             "staller": bool(rng.random() < STALLER_REP_SHARE),
         }
         for rep_id in reps["rep_id"]
@@ -288,11 +292,14 @@ def _stage_days(rng: np.random.Generator, mean_days: float) -> int:
     return max(1, int(round(rng.gamma(shape=3.0, scale=mean_days / 3.0))))
 
 
-def _pick_rep(rng: np.random.Generator, reps: pd.DataFrame, tier: str, region: str) -> str:
-    """A rep who sells to this tier in this region, falling back to any rep in the tier."""
-    pool = reps[(reps["segment"] == tier) & (reps["region"] == region)]
-    if pool.empty:
-        pool = reps[reps["segment"] == tier]
+def _pick_rep(rng: np.random.Generator, reps: pd.DataFrame, tier: str) -> str:
+    """A random rep from the segment that sells to this tier.
+
+    Routing is deliberately region-agnostic. Matching on region too would hand a
+    lone rep in a small region a whole region's deals, and book sizes (and so
+    quota attainment) would swing far more than in a real sales org.
+    """
+    pool = reps[reps["segment"] == tier]
     return str(pool["rep_id"].iloc[rng.integers(len(pool))])
 
 
@@ -410,7 +417,7 @@ def generate_opportunities(
         opp_id = f"OPP-{n:06d}"
         account = accounts.iloc[rng.integers(len(accounts))]
         tier = account["tier"]
-        rep_id = _pick_rep(rng, reps, tier, account["region"])
+        rep_id = _pick_rep(rng, reps, tier)
 
         median, sigma = TIER_AMOUNT[tier]
         amount = round(float(rng.lognormal(math.log(median), sigma)) / 500) * 500
