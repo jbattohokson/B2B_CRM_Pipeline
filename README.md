@@ -14,9 +14,14 @@ This project is a dbt-duckdb star schema over B2B SaaS CRM data. A Streamlit app
    - `agg_stage_conversion`: stage-to-stage conversion and average/median days in stage, by tier plus an "All" rollup. Conversion counts resolved stage visits only (advanced ÷ (advanced + lost)), so deals still in a stage don't drag down recent cohorts. `historical_win_rate_from_stage` multiplies the conversion rates from a stage through Closed-Won.
    - `fct_stage_history`, `fct_activities`, `dim_accounts`, `dim_reps`, and `dim_date` complete the star.
    - The as-of date (2026-08-15, mid-Q3) and the 45-day stall threshold are dbt vars in `dbt_project.yml`. 72 dbt tests cover keys, relationships, accepted values/ranges, and seven reconciliation checks in `data_tests/`.
-4. **Local AI agent**: `agent/crew_agent.py` is a CrewAI "RevOps Analyst" running on a local Ollama model (`llama3.1`). Its backstory carries the dbt mart schema. It queries DuckDB through a read-only `SELECT` tool and writes an analytical summary. Nothing leaves the machine, and there's no API key or cost.
+4. **Local AI agent** (`agent/`): a CrewAI "Senior RevOps Analyst" running on a local Ollama model (default `llama3.1`; set `OLLAMA_MODEL` to change it). Nothing leaves the machine, and there's no API key or cost. CrewAI tracing and OpenTelemetry export are switched off before `crewai` is imported.
+   - `schema_context.py` builds the agent's backstory. Column lists are read live from DuckDB, so they can't drift from what dbt built. A glossary of metric definitions comes with them (a test checks every glossary column still exists), and the as-of date and stall threshold come from the dbt vars. It's kept to about 1.3k tokens because Ollama's default context is 4,096 tokens, and context-shift silently drops the oldest tokens, which is where the schema sits.
+   - `sql_tool.py` is the `query_crm_database` tool, with three layers of protection. DuckDB's own parser must see exactly one SELECT statement. The connection is `read_only`. And `enable_external_access=false` blocks `read_csv()`/`COPY`/`ATTACH` against local files. Results are capped at 200 rows, and a timer interrupts queries that run longer than 15 s. Errors go back to the model as text so it can fix its SQL.
+   - `crew_agent.py` runs the crew. It checks Ollama is up and the model is pulled (with fix-it messages), logs every query with its DataFrame for the UI, and re-runs once if no query succeeded.
+   - `fact_check.py` flags any figure in the answer that doesn't match a value in the query results (see Testing status for why).
+   - `live_eval.py` asks four questions against live Ollama and prints each answer next to ground truth computed directly in SQL.
 5. **App**: `app/main.py` is a Streamlit app with three tabs: KPI Dashboard, AI Revenue Copilot, and Pipeline Risk Simulator.
-6. **Tests**: `tests/` has pytest coverage for the generator and loader (the agent's SQL guardrails get added in Step 4). dbt tests live in `data_tests/` and the model YAMLs.
+6. **Tests**: `tests/` has pytest coverage for the generator, the loader, the agent's SQL guardrails/schema context/wiring, and the figure check. The agent tests run against a warehouse that the test fixture builds with the real loader and `dbt build`. dbt tests live in `data_tests/` and the model YAMLs.
 
 Requires Python 3.13. `dbt-duckdb`'s dependency chain has no CPython 3.14 wheels yet (same constraint as `../MLB_Live_Agent`).
 
@@ -31,8 +36,15 @@ python3.13 -m venv .venv
 # Build and test the dbt models (staging views + mart tables)
 DBT_PROFILES_DIR=. .venv/bin/dbt build
 
-# Run the Python tests
+# Run the Python tests (the live-Ollama test is opt-in: RUN_OLLAMA_TESTS=1)
 .venv/bin/pytest -q
+
+# Ask the local agent a question (needs Ollama running: https://ollama.com)
+ollama pull llama3.1
+.venv/bin/python -m agent.crew_agent "Which reps have deals stuck in negotiation over 45 days?"
+
+# Score the agent against SQL ground truth (takes minutes on a laptop CPU)
+.venv/bin/python -m agent.live_eval --model llama3.1
 ```
 
 *(The Streamlit run command gets added here once the app is built.)*
@@ -58,7 +70,7 @@ Python (pandas), DuckDB, dbt-duckdb, SQL, Streamlit, Plotly, CrewAI, Ollama (lla
 
 ## Testing status (2026-10-19)
 
-Generator, loader, and dbt models are tested. The agent and the app don't exist yet.
+Generator, loader, dbt models, and the local agent are tested. The Streamlit app doesn't exist yet.
 
 - **pytest:** 47 tests, all passing (`tests/test_generate_data.py`, `tests/test_load_to_duckdb.py`), run on a small seeded config (1,500 opportunities, about 1 s to generate). Generator tests cover byte-identical output for the same seed, PK/FK integrity, valid funnel walks in stage history (in order, contiguous dates, exactly one open step), probability-by-stage, close-date rules for open vs. closed deals, activity timestamps inside deal lifetimes, the ARR rule, and that stalled Negotiation deals actually exist. Loader tests cover contract types, whitespace trimming, every validation rule tripping on a corrupted CSV with the exact row count reported, rollback leaving the previous load intact, missing/renamed columns, uncastable values, and a locked database file.
 - **dbt:** `dbt build` passes 85/85: 13 models and 72 tests. Beyond generic tests, the singular tests reconcile the marts to each other: one velocity row per raw opportunity, stage days summing exactly to the sales cycle for every closed deal, stalled flags only on open Negotiation deals past the threshold, rep rollups (including QTD wins and historical-weighted pipeline) matching the opportunity fact, the conversion "All" row equaling the sum of the tiers, every open deal finding a historical win rate, and quarter flags respecting the as-of date. Negative control: re-running the stalled-flag test with the threshold var set to 90 (while the tables were built at 45) fails with exactly the 31 rows expected, so the test really does catch violations. (That control ran at the earlier 2026-09-30 as-of date.)
@@ -67,6 +79,13 @@ Generator, loader, and dbt models are tested. The agent and the app don't exist 
 - **Forecast definition fix (2026-10-19):** the first version used an as-of date of 2026-09-30 (the last day of Q3) and forecast the *next* quarter. Every open deal's close date falls after the as-of date, so about 97% of open pipeline landed in that quarter, and the forecast flag barely filtered anything. Moving the as-of date to mid-quarter and switching to won-QTD + in-quarter weighted pipeline fixed it.
 - **Tuning found on the first generator run:** with the original 4,000 opportunities, only 169 deals were open as of 2026-09-30, and trailing-12-month bookings were about 37% of quota. That's too thin for the dashboard and an unrealistically large revenue gap. Raising volume to 9,000 and the growth factor to 2.5× fixed it.
 - **Generator bug found by the first dbt run:** rep-level attainment in `dim_sales_performance` ranged from 7% to 216%. Two causes. Routing deals by segment *and* region gave a lone rep in a small region a whole region's share of a segment. And the per-stage skill multiplier (originally σ = 0.12, clipped 0.7–1.3) compounded across four stage transitions. The fix: routing is now segment-only, skill is σ = 0.06 clipped 0.85–1.15, and quotas were recalibrated per segment. The remaining spread (7%–203%) mostly comes from small samples: Enterprise reps close about 10 deals a year at an 8% win rate, so a rep with zero wins in a year is plausible.
+- **Agent unit tests (no LLM needed):** the SQL guard rejects INSERT/UPDATE/DELETE/DROP/CREATE/ATTACH/COPY/SET and stacked statements. A `read_csv()` of a local file through a SELECT is refused. The 200-row cap and the 15 s timeout both work. Glossary columns are checked against the warehouse, and the schema prompt stays under budget. Ollama-down and model-missing errors are clear. The tool returns errors as text and logs queries. Retry-when-ungrounded and stop-after-max-attempts are covered (with a fake crew), and the figure checker is tested on real llama3.2 answers. Full suite: 112 passed, 1 skipped (the opt-in live test).
+- **Live agent (llama3.2 3B, the only model pulled on the dev machine; the default is llama3.1 8B):** `agent/live_eval.py` ran 4 questions, twice.
+  - **SQL and headline answers: 8/8 grounded and correct on the first attempt** (41 stalled deals / $1,373,500; Maya Brooks's $212,400 gap; 49% Enterprise Demo conversion; 50.4 / 71.9 / 108.4-day cycles). 44–108 s per question on a laptop CPU.
+  - **The write-up around those answers is where the 3B model fabricates.** Run 1 invented a "$1,000,000 stall threshold," Mid-Market/SMB conversion rates and a "$250k deal size" it never queried, and an overall average it never computed. It also recommended "increasing" a rep's revenue gap. Tightening the prompt ("quote numbers exactly as they appear; never add a figure you did not query") cleaned up Q3, but run 2 still invented a "$1,736,000 quarterly quota" and "12.5%" shortfall percentages for Q2.
+  - **Response:** `fact_check.py` flags those figures deterministically. It's tested on the actual answers above and catches every invented figure with no false positives once prompt constants (45-day threshold, 365-day TTM) are allowed. The Streamlit app will show flagged figures next to the answer instead of presenting the prose as fact.
+  - **An earlier failure mode, fixed by retry:** one development run wrote invalid SQL (`alias.table.column`) and then printed the tool call as text instead of making it, so it returned an answer with no data behind it. Fixes: a schema tip on alias syntax, plus one automatic retry when no query succeeded.
+  - **Not yet measured:** llama3.1 8B (the configured default), which needs a 4.9 GB `ollama pull`. Expect better tool-calling and prose, and slower answers.
 - **Not testable:** whether the generator's distributions match any particular real company's CRM. There's no real data to compare against, so realism rests on the documented assumptions above.
 
 ## Repo hygiene note
