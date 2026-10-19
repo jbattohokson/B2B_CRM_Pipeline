@@ -1,6 +1,6 @@
-# B2B SaaS CRM Pipeline Velocity & AI Forecasting Agent
+# B2B SaaS CRM Pipeline Velocity & Local AI Forecasting Agent
 
-This project is a dbt-duckdb star schema over B2B SaaS CRM data. A Streamlit app sits on top with three parts: an executive KPI dashboard, a Claude-powered text-to-SQL "Revenue Copilot", and a pipeline risk simulator.
+This project is a dbt-duckdb star schema over B2B SaaS CRM data. A Streamlit app sits on top with three parts: an executive KPI dashboard, a "Revenue Copilot" that runs on a local LLM (CrewAI + Ollama) and answers questions with SQL, and a pipeline risk simulator.
 
 **Business question this answers:** where is the sales pipeline actually slowing down (by stage, tier, and rep), which deals have stalled, and how big is the gap between weighted pipeline and quota? A sales director can ask these questions in plain English and get a SQL-backed answer.
 
@@ -8,10 +8,15 @@ This project is a dbt-duckdb star schema over B2B SaaS CRM data. A Streamlit app
 
 1. **Generate**: `pipelines/generate_data.py` writes six seeded synthetic CRM CSVs to `data/raw/`: accounts, reps, date, opportunities, stage history, and activities. Stage history (one row per opportunity per stage entered, with entry and exit dates) wasn't in the original table list. It's included because stage durations and stage-to-stage conversion can't be computed honestly from a "current stage" column alone.
 2. **Ingest**: `pipelines/load_to_duckdb.py` checks every CSV header against an explicit column/type contract, trims whitespace, and loads the files into the `raw` schema of `crm_analytics.duckdb`. It then runs integrity checks in the same transaction (primary keys, foreign keys, accepted stage values, amount/probability ranges, date ordering, and opportunity stage vs. latest stage-history row). Any failure rolls back the whole load.
-3. **Transform (dbt-duckdb)**: `models/staging/` cleans types and names. `models/marts/` builds `fct_pipeline_velocity` and `dim_sales_performance` (sales cycle length, stage conversion, stalled-deal flags, expected revenue gap).
-4. **AI agent**: `app/agent.py` gives Claude the schema and metric definitions, gets back read-only SQL, runs it against DuckDB, and summarizes the result.
+3. **Transform (dbt-duckdb)**: `models/staging/` holds six `stg_*` views that rename columns and add funnel-order and status flags. `models/marts/` builds the star schema in a `marts` schema:
+   - `fct_pipeline_velocity`: one row per opportunity. Weighted amount (amount × stage probability), sales cycle and deal age, days in each stage, days since last activity, an `is_stalled` flag (open in Negotiation > 45 days), and an `is_in_forecast_quarter` flag.
+   - `dim_sales_performance`: one row per rep. Open and weighted pipeline, **expected revenue gap** (quarterly quota − weighted pipeline expected to close in the forecast quarter), pipeline coverage, stalled deals, TTM bookings, win rate, attainment, and average cycle.
+   - `agg_stage_conversion`: stage-to-stage conversion and average/median days in stage, by tier plus an "All" rollup. Conversion counts resolved stage visits only (advanced ÷ (advanced + lost)), so deals still in a stage don't drag down recent cohorts.
+   - `fct_stage_history`, `fct_activities`, `dim_accounts`, `dim_reps`, and `dim_date` complete the star.
+   - The as-of date (2026-09-30) and the 45-day stall threshold are dbt vars in `dbt_project.yml`. 62 dbt tests cover keys, relationships, accepted values/ranges, and five reconciliation checks in `data_tests/`.
+4. **Local AI agent**: `agent/crew_agent.py` is a CrewAI "RevOps Analyst" running on a local Ollama model (`llama3.1`). Its backstory carries the dbt mart schema. It queries DuckDB through a read-only `SELECT` tool and writes an analytical summary. Nothing leaves the machine, and there's no API key or cost.
 5. **App**: `app/main.py` is a Streamlit app with three tabs: KPI Dashboard, AI Revenue Copilot, and Pipeline Risk Simulator.
-6. **Tests**: `tests/` has pytest coverage for the generator, the loader, the SQL guardrails, and the metrics.
+6. **Tests**: `tests/` has pytest coverage for the generator and loader (the agent's SQL guardrails get added in Step 4). dbt tests live in `data_tests/` and the model YAMLs.
 
 Requires Python 3.13. `dbt-duckdb`'s dependency chain has no CPython 3.14 wheels yet (same constraint as `../MLB_Live_Agent`).
 
@@ -23,38 +28,46 @@ python3.13 -m venv .venv
 .venv/bin/python pipelines/generate_data.py
 .venv/bin/python pipelines/load_to_duckdb.py
 
-# Run the tests
+# Build and test the dbt models (staging views + mart tables)
+DBT_PROFILES_DIR=. .venv/bin/dbt build
+
+# Run the Python tests
 .venv/bin/pytest -q
 ```
 
-*(dbt and Streamlit run commands get added here as those stages are built.)*
+*(The Streamlit run command gets added here once the app is built.)*
 
 ## Tools
 
-Python (pandas), DuckDB, dbt-duckdb, SQL, Streamlit, Plotly, Anthropic Claude API, pytest.
+Python (pandas), DuckDB, dbt-duckdb, SQL, Streamlit, Plotly, CrewAI, Ollama (llama3.1), pytest.
 
 ## Data honesty
 
 - All data is synthetic, from a seeded generator. Patterns such as tier-dependent cycle lengths and stalled negotiations are designed in, so the analysis shows that the pipeline and metrics work. It doesn't claim real-world findings.
 - Generator assumptions (all constants live at the top of `generate_data.py`):
-  - **Funnel:** Prospecting → Discovery → Demo → Negotiation → Closed-Won, with a chance of Closed-Lost at each step. Base advance rates are 65/60/55/60%, adjusted by tier (SMB +5 pts, Enterprise −5 pts) and by a hidden per-rep skill multiplier.
+  - **Funnel:** Prospecting → Discovery → Demo → Negotiation → Closed-Won, with a chance of Closed-Lost at each step. Base advance rates are 65/60/55/60%, adjusted by tier (SMB +5 pts, Enterprise −5 pts) and by a hidden per-rep skill multiplier (0.85–1.15 per stage, compounding to roughly 0.5×–1.75× on overall win rate).
   - **Tiers:** set by employee count (SMB < 200, Mid-Market 200–1,999, Enterprise 2,000+). Mean days per stage and deal sizes scale with tier (median deal $12k / $45k / $150k).
   - **Stalls:** 15% of deals reaching Negotiation stall for 60–180 days. That rises to 20% for Enterprise, and is 2.5× higher for a hidden "staller" subset (about 15%) of reps. Stalled deals win half as often, and activity drops to a trickle after 30 days.
-  - **Routing:** every deal is worked by a rep whose segment matches the account's tier, in the account's region where possible.
+  - **Routing:** every deal goes to a random rep in the segment that matches the account's tier. Region is deliberately ignored (see Testing status for why).
+  - **Quotas:** calibrated per segment (SMB $360–500k, Mid-Market $680–950k, Enterprise $850k–1.15M) so a typical rep lands near 80–90% attainment, given that segment's deal flow.
   - **ARR:** an account's ARR is the sum of its Closed-Won amounts from the trailing 365 days. This assumes 1-year contracts; renewals aren't modeled, so ARR is 0 for prospects and for lapsed customers.
   - **Dates:** the simulation's "today" is fixed at 2026-09-30, so runs are reproducible. Open deals get a rep-entered expected close date, which is pushed into the future if the planned date has already passed.
-  - **Volume:** the opportunity creation rate grows 2.5× across the window. With the defaults, trailing-12-month bookings come to about 85% of total annual quota, so the revenue-gap metric has a real gap to measure.
+  - **Volume:** the opportunity creation rate grows 2.5× across the window. With the defaults, trailing-12-month bookings come to 87% of total annual quota. Individual reps range from 7% to 203%.
+- The forecast quarter is the quarter after the as-of date (2026-Q4). Open deals' close dates are pushed to after the as-of date, so almost all open pipeline lands in that quarter. Weighted pipeline uses the CRM's stage probabilities (10/20/40/70%). These are not the historical conversion rates in `agg_stage_conversion`, so the forecast is optimistic, which is also true of real CRMs. Comparing the two is a job for the Step 5 simulator.
 - Rep skill and the staller flag are deliberately *not* written to the CSVs. The analysis has to find these effects in the outcomes, the same way it would in a real CRM.
 
 ## Testing status (2026-10-19)
 
-Generator and loader only. dbt, the agent, and the app don't exist yet.
+Generator, loader, and dbt models are tested. The agent and the app don't exist yet.
 
 - **pytest:** 47 tests, all passing (`tests/test_generate_data.py`, `tests/test_load_to_duckdb.py`), run on a small seeded config (1,500 opportunities, about 1 s to generate). Generator tests cover byte-identical output for the same seed, PK/FK integrity, valid funnel walks in stage history (in order, contiguous dates, exactly one open step), probability-by-stage, close-date rules for open vs. closed deals, activity timestamps inside deal lifetimes, the ARR rule, and that stalled Negotiation deals actually exist. Loader tests cover contract types, whitespace trimming, every validation rule tripping on a corrupted CSV with the exact row count reported, rollback leaving the previous load intact, missing/renamed columns, uncastable values, and a locked database file.
-- **3× repeat run:** generate + load ran three times from scratch. CSV checksums and per-table content hashes of all six `raw` tables were identical across runs (600 accounts, 36 reps, 1,461 dates, 9,000 opportunities, 29,916 stage-history rows, 77,270 activities).
-- **Tuning found on the first real run:** with the original 4,000 opportunities, only 169 deals were open as of 2026-09-30, and trailing-12-month bookings were about 37% of quota. That's too thin for the dashboard and an unrealistically large revenue gap. Raising volume to 9,000 and the growth factor to 2.5× gave 421 open deals, 47 Negotiation deals stalled more than 45 days, and about 85% attainment.
+- **dbt:** `dbt build` passes 75/75: 13 models and 62 tests. Beyond generic tests, the singular tests reconcile the marts to each other: one velocity row per raw opportunity, stage days summing exactly to the sales cycle for every closed deal, stalled flags only on open Negotiation deals past the threshold, rep rollups matching the opportunity fact, and the conversion "All" row equaling the sum of the tiers. Negative control: re-running the stalled-flag test with the threshold var set to 90 (while the tables were built at 45) fails with exactly the 31 rows expected, so the test really does catch violations.
+- **3× repeat run:** generate → load → `dbt build` ran three times from a deleted database. Content hashes of all 14 tables (6 `raw`, 8 `marts`) were identical across runs.
+- **Metric sanity (seed 42):** 424 open deals and 43 stalled. Stalled deals average 22.8 days since last activity, vs 3.1 for other open deals. Won-deal cycle is 51 / 72 / 109 days for SMB / Mid-Market / Enterprise. Negotiation's mean stay (36 days) is nearly double its median (19 days), which is the stall long tail showing up.
+- **Tuning found on the first generator run:** with the original 4,000 opportunities, only 169 deals were open as of 2026-09-30, and trailing-12-month bookings were about 37% of quota. That's too thin for the dashboard and an unrealistically large revenue gap. Raising volume to 9,000 and the growth factor to 2.5× fixed it.
+- **Generator bug found by the first dbt run:** rep-level attainment in `dim_sales_performance` ranged from 7% to 216%. Two causes. Routing deals by segment *and* region gave a lone rep in a small region a whole region's share of a segment. And the per-stage skill multiplier (originally σ = 0.12, clipped 0.7–1.3) compounded across four stage transitions. The fix: routing is now segment-only, skill is σ = 0.06 clipped 0.85–1.15, and quotas were recalibrated per segment. The remaining spread (7%–203%) mostly comes from small samples: Enterprise reps close about 10 deals a year at an 8% win rate, so a rep with zero wins in a year is plausible.
 - **Not testable:** whether the generator's distributions match any particular real company's CRM. There's no real data to compare against, so realism rests on the documented assumptions above.
 
 ## Repo hygiene note
 
-`data/raw/*.csv` and `*.duckdb` are gitignored. Both are fully reproducible from `generate_data.py` (seeded) and the loader, so nothing is lost by excluding them. `.env` / `.streamlit/secrets.toml` (the Claude API key) are gitignored too.
+`data/raw/*.csv` and `*.duckdb` are gitignored. Both are fully reproducible from `generate_data.py` (seeded) and the loader, so nothing is lost by excluding them. `.env` / `.streamlit/secrets.toml` are gitignored as a precaution, though the local Ollama setup needs no secrets.

@@ -1,0 +1,151 @@
+version: 2
+
+models:
+  - name: dim_accounts
+    description: Account dimension. One row per account.
+    columns:
+      - name: account_id
+        data_tests: [unique, not_null]
+
+  - name: dim_reps
+    description: Rep dimension. One row per sales rep.
+    columns:
+      - name: rep_id
+        data_tests: [unique, not_null]
+
+  - name: dim_date
+    description: Calendar dimension. One row per day.
+    columns:
+      - name: date_day
+        data_tests: [unique, not_null]
+
+  - name: fct_activities
+    description: One row per logged sales activity, with owning rep and account.
+    columns:
+      - name: activity_id
+        data_tests: [unique, not_null]
+      - name: rep_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_reps')
+                field: rep_id
+
+  - name: fct_stage_history
+    description: >
+      One row per opportunity per stage entered, with days in stage and the outcome
+      (advanced / lost / open). Source for stage-duration and conversion metrics.
+    columns:
+      - name: stage_history_key
+        data_tests: [unique, not_null]
+      - name: stage_outcome
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['advanced', 'lost', 'open']
+      - name: days_in_stage
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+
+  - name: fct_pipeline_velocity
+    description: >
+      One row per opportunity. Core fact for pipeline velocity, stalled-deal risk and
+      the weighted (expected revenue) forecast. All "as of" figures use var('as_of_date').
+    columns:
+      - name: opportunity_id
+        data_tests: [unique, not_null]
+      - name: account_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_accounts')
+                field: account_id
+      - name: rep_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_reps')
+                field: rep_id
+      - name: created_date
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: close_date
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: weighted_amount
+        description: amount * stage_probability while open (expected revenue); 0 once closed.
+        data_tests:
+          - not_null
+          - accepted_range:
+              arguments:
+                min_value: 0
+      - name: sales_cycle_days
+        description: Days from created to close, for closed deals only.
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+      - name: is_stalled
+        description: Open, in Negotiation, for more than var('stalled_days_threshold') (45) days.
+        data_tests: [not_null]
+      - name: furthest_stage_order
+        data_tests:
+          - not_null
+          - accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 4
+
+  - name: agg_stage_conversion
+    description: >
+      Stage-to-stage conversion and stage duration by account tier, plus an 'All'
+      rollup. conversion_rate = advanced / (advanced + lost), counting resolved
+      stage visits only.
+    data_tests:
+      - unique:
+          arguments:
+            column_name: "account_tier || '|' || stage_name"
+    columns:
+      - name: account_tier
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['SMB', 'Mid-Market', 'Enterprise', 'All']
+      - name: conversion_rate
+        data_tests:
+          - not_null
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: pct_of_created_reaching_stage
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+
+  - name: dim_sales_performance
+    description: >
+      One row per rep: open and weighted pipeline, forecast-quarter gap to quota,
+      stalled deals, TTM bookings, win rate and sales cycle.
+    columns:
+      - name: rep_id
+        data_tests: [unique, not_null]
+      - name: expected_revenue_gap
+        description: quarterly_quota minus forecast-quarter weighted pipeline. Positive means a projected shortfall.
+        data_tests: [not_null]
+      - name: win_rate_ttm
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
