@@ -39,7 +39,8 @@ DBT_PROFILES_DIR=. .venv/bin/dbt build
 # Run the Python tests (the live-Ollama test is opt-in: RUN_OLLAMA_TESTS=1)
 .venv/bin/pytest -q
 
-# Ask the local agent a question (needs Ollama running: https://ollama.com)
+# Ask the local agent a question (needs Ollama running: https://ollama.com).
+# llama3.1 (8B) needs 16 GB+ RAM in practice; on 8 GB machines use: export OLLAMA_MODEL=llama3.2
 ollama pull llama3.1
 .venv/bin/python -m agent.crew_agent "Which reps have deals stuck in negotiation over 45 days?"
 
@@ -85,7 +86,14 @@ Generator, loader, dbt models, and the local agent are tested. The Streamlit app
   - **The write-up around those answers is where the 3B model fabricates.** Run 1 invented a "$1,000,000 stall threshold," Mid-Market/SMB conversion rates and a "$250k deal size" it never queried, and an overall average it never computed. It also recommended "increasing" a rep's revenue gap. Tightening the prompt ("quote numbers exactly as they appear; never add a figure you did not query") cleaned up Q3, but run 2 still invented a "$1,736,000 quarterly quota" and "12.5%" shortfall percentages for Q2.
   - **Response:** `fact_check.py` flags those figures deterministically. It's tested on the actual answers above and catches every invented figure with no false positives once prompt constants (45-day threshold, 365-day TTM) are allowed. The Streamlit app will show flagged figures next to the answer instead of presenting the prose as fact.
   - **An earlier failure mode, fixed by retry:** one development run wrote invalid SQL (`alias.table.column`) and then printed the tool call as text instead of making it, so it returned an answer with no data behind it. Fixes: a schema tip on alias syntax, plus one automatic retry when no query succeeded.
-  - **Not yet measured:** llama3.1 8B (the configured default), which needs a 4.9 GB `ollama pull`. Expect better tool-calling and prose, and slower answers.
+  - **llama3.1 8B (the configured default) could not be evaluated on the dev machine** (Apple M2, 8 GB RAM). Loaded, the model takes 5.7 GB, and swap hit 14.5 of 15 GB. After 21 minutes, Q1 still had no answer, and one model call exceeded the 300 s request timeout. The eval was stopped and the model unloaded. This is a hardware limit, not a measured quality result: llama3.1's answer quality on this eval is still unknown.
+
+  | Model | Machine | Grounded answers | Correct SQL + headline | Latency / question | Invented filler figures |
+  |---|---|---|---|---|---|
+  | llama3.2 3B | M2, 8 GB | 8/8 (2 runs) | 8/8 | 44–108 s | Yes, every run (flagged by `fact_check.py`) |
+  | llama3.1 8B | M2, 8 GB | 0/1 finished | n/a | >21 min (stopped) | n/a |
+
+  Practical guidance: on 8 GB machines, run `OLLAMA_MODEL=llama3.2`. Re-run `agent.live_eval --model llama3.1` on a machine with 16 GB+ to fill in the second row.
 - **Not testable:** whether the generator's distributions match any particular real company's CRM. There's no real data to compare against, so realism rests on the documented assumptions above.
 
 ## Repo hygiene note
