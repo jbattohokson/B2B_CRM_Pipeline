@@ -4,12 +4,23 @@ config-version: 2
 profile: b2b_crm_pipeline
 
 model-paths: ["models"]
+macro-paths: ["macros"]
+# Singular dbt tests live in data_tests/ so they don't collide with the pytest suite in tests/.
+test-paths: ["data_tests"]
 target-path: "target"
 clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # "Today" for every as-of metric. Must match the generator's --as-of so open deals line up.
+  as_of_date: "2026-09-30"
+  # An open Negotiation deal older than this many days counts as stalled.
+  stalled_days_threshold: 45
 
 models:
   b2b_crm_pipeline:
     staging:
+      +schema: staging
       +materialized: view
     marts:
+      +schema: marts
       +materialized: table
