@@ -6,5 +6,13 @@
 pandas>=2.0.0
 
 # Warehouse + transform
-duckdb>=0.10.0
+duckdb>=1.0.0
 dbt-duckdb>=1.8.0
+
+# App + AI layer
+streamlit>=1.35.0
+plotly>=5.20.0
+anthropic>=0.40.0
+
+# Testing
+pytest>=8.0.0

@@ -1,7 +1,0 @@
-b2b_crm_pipeline:
-  target: dev
-  outputs:
-    dev:
-      type: duckdb
-      path: "{{ env_var('DBT_DB_PATH', 'b2b_crm_pipeline.duckdb') }}"
-      threads: 4

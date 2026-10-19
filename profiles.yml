@@ -1,0 +1,8 @@
+b2b_crm_pipeline:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      # Same file the ingestion script writes raw tables into and the Streamlit app reads from.
+      path: "{{ env_var('DBT_DB_PATH', 'crm_analytics.duckdb') }}"
+      threads: 4

@@ -1,15 +1,13 @@
-# Raw data (not tracked in git)
+# Raw data (generated, not tracked in git)
 
-Dataset: [CRM + Sales + Opportunities](https://www.kaggle.com/datasets/innocentmfa/crm-sales-opportunities) (Kaggle, Mursaleen Ameer, Apache 2.0, ~8,800 opportunity rows). Chosen 2026-09-20 over the originally-planned generic 5-file schema because it has real opportunity-grain data (deal stage/size/probability in `sales_pipeline.csv`) needed for the Weighted Pipeline and Forecast Accuracy metrics — most other Kaggle "B2B CRM" datasets are company/contact segmentation data with no deal-stage information at all.
+Everything in this folder is produced by `pipelines/generate_data.py`, a seeded synthetic generator for B2B SaaS CRM data. Running it again with the same seed gives the same rows, so the CSVs are gitignored instead of committed.
 
-Log into Kaggle, download the dataset, and place these 5 files here exactly as named:
+Expected files after generation:
 
-- `accounts.csv`
-- `products.csv`
-- `sales_pipeline.csv` — this is the opportunity-grain fact table (`fct_opportunities` will be built from this)
-- `sales_teams.csv` — this is the rep/user dimension (`dim_users`)
-- `data_dictionary.csv` — column definitions, not loaded into the model, kept for reference
+- `dim_accounts.csv`: one row per customer account (industry, ARR, employee count, tier)
+- `dim_reps.csv`: one row per sales rep (region, quota)
+- `dim_date.csv`: calendar dimension
+- `fct_opportunities.csv`: one row per opportunity (stage, amount, probability, created/close dates)
+- `fct_activities.csv`: one row per sales activity logged against an opportunity
 
-Note: there's no separate `leads.csv` or `tasks.csv` in this dataset — `sales_pipeline.csv`'s stage column (starts at "Prospecting") covers the lead-to-opportunity flow in one table instead of two. The star schema in the README will be adjusted to match once these are inspected for real, rather than assuming the original 5-table guess.
-
-These are gitignored (see root `.gitignore`) — only this README is tracked, so the folder exists in a fresh clone.
+History: this project first planned to use a Kaggle dataset ([CRM + Sales + Opportunities](https://www.kaggle.com/datasets/innocentmfa/crm-sales-opportunities)). On 2026-10-19 it switched to synthetic data. The generator controls stage timestamps and activity logs directly, which the velocity, stalled-deal, and conversion metrics need and the Kaggle export doesn't have. It also lets the project run end to end on a fresh clone without a Kaggle login.
