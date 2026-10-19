@@ -2,12 +2,15 @@
   One row per opportunity: the core fact table for pipeline velocity, risk and forecasting.
 
   Key metrics:
-    weighted_amount       amount * stage_probability for open deals (expected revenue), 0 once closed
+    weighted_amount       amount * stage_probability for open deals (expected revenue, CRM weights), 0 once closed
+    historical_weighted_amount  amount * historical win rate from the deal's current stage and tier
+                          (agg_stage_conversion), 0 once closed: the forecast if history repeats
     sales_cycle_days      created -> close for closed deals (null while open)
     deal_age_days         created -> as-of date for open deals (null once closed)
     days_in_<stage>       time spent in each funnel stage (to as-of date if currently there)
     is_stalled            open, in Negotiation, for more than var('stalled_days_threshold') days
-    is_in_forecast_quarter  open, with an expected close date in the quarter after the as-of date
+    is_closing_this_quarter  open, with an expected close date in the current quarter (the one containing the as-of date)
+    is_won_this_quarter   won between the start of the current quarter and the as-of date (quarter-to-date bookings)
 */
 with stage_days as (
     select
@@ -37,10 +40,16 @@ activity as (
 ),
 
 forecast_window as (
-    -- The quarter right after the as-of date: the quarter being forecast.
+    -- The current quarter (the one containing the as-of date) is the quarter being forecast.
     select
-        cast(date_trunc('quarter', {{ as_of_date() }} + interval 1 day) as date) as quarter_start,
-        cast(date_trunc('quarter', {{ as_of_date() }} + interval 1 day) + interval 3 month as date) as quarter_end
+        cast(date_trunc('quarter', {{ as_of_date() }}) as date) as quarter_start,
+        cast(date_trunc('quarter', {{ as_of_date() }}) + interval 3 month as date) as quarter_end
+),
+
+historical_rates as (
+    select account_tier, stage_name, historical_win_rate_from_stage
+    from {{ ref('agg_stage_conversion') }}
+    where account_tier <> 'All'
 )
 
 select
@@ -67,6 +76,13 @@ select
     o.amount,
     o.stage_probability,
     case when o.is_open then o.amount * o.stage_probability else 0 end as weighted_amount,
+    case when o.is_open then hr.historical_win_rate_from_stage end as historical_win_probability,
+    -- Rounded to cents as DECIMAL: summing raw doubles in parallel is order-dependent, which made
+    -- rep-level totals differ in the last bits between otherwise identical runs.
+    cast(
+        case when o.is_open then o.amount * hr.historical_win_rate_from_stage else 0 end
+        as decimal(14, 2)
+    ) as historical_weighted_amount,
 
     -- Dates
     o.created_date,
@@ -100,11 +116,19 @@ select
         o.is_open
         and o.close_date >= fw.quarter_start
         and o.close_date < fw.quarter_end
-    ) as is_in_forecast_quarter
+    ) as is_closing_this_quarter,
+    (
+        o.is_won
+        and o.close_date >= fw.quarter_start
+        and o.close_date <= {{ as_of_date() }}
+    ) as is_won_this_quarter
 
 from {{ ref('stg_opportunities') }} o
 join {{ ref('stg_accounts') }} a using (account_id)
 join {{ ref('stg_reps') }} r using (rep_id)
 join stage_days sd using (opportunity_id)
 left join activity act using (opportunity_id)
+left join historical_rates hr
+    on hr.account_tier = a.account_tier
+   and hr.stage_name = o.stage_name
 cross join forecast_window fw

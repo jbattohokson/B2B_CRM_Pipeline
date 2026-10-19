@@ -87,6 +87,19 @@ models:
           - accepted_range:
               arguments:
                 min_value: 0
+      - name: historical_weighted_amount
+        description: amount * historical win rate from the deal's current stage and tier, while open; 0 once closed.
+        data_tests:
+          - not_null
+          - accepted_range:
+              arguments:
+                min_value: 0
+      - name: historical_win_probability
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
       - name: sales_cycle_days
         description: Days from created to close, for closed deals only.
         data_tests:
@@ -126,6 +139,14 @@ models:
               arguments:
                 min_value: 0
                 max_value: 1
+      - name: historical_win_rate_from_stage
+        description: Product of conversion rates from this stage through Closed-Won.
+        data_tests:
+          - not_null
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
       - name: pct_of_created_reaching_stage
         data_tests:
           - accepted_range:
@@ -135,14 +156,25 @@ models:
 
   - name: dim_sales_performance
     description: >
-      One row per rep: open and weighted pipeline, forecast-quarter gap to quota,
+      One row per rep: open and weighted pipeline, current-quarter forecast gap to quota,
       stalled deals, TTM bookings, win rate and sales cycle.
     columns:
       - name: rep_id
         data_tests: [unique, not_null]
       - name: expected_revenue_gap
-        description: quarterly_quota minus forecast-quarter weighted pipeline. Positive means a projected shortfall.
+        description: >
+          quarterly_quota - (won_qtd + forecast_weighted_pipeline). Positive means a projected
+          shortfall for the current quarter.
         data_tests: [not_null]
+      - name: expected_revenue_gap_historical
+        description: Same as expected_revenue_gap, but weighting open deals by historical win rates.
+        data_tests: [not_null]
+      - name: won_qtd
+        data_tests:
+          - not_null
+          - accepted_range:
+              arguments:
+                min_value: 0
       - name: win_rate_ttm
         data_tests:
           - accepted_range:

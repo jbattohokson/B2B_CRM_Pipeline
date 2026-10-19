@@ -160,7 +160,7 @@ class GeneratorConfig:
     n_reps: int = 36
     n_opportunities: int = 9000
     start_date: date = date(2024, 1, 1)
-    as_of: date = date(2026, 9, 30)
+    as_of: date = date(2026, 8, 15)
 
     def __post_init__(self) -> None:
         if self.as_of <= self.start_date:
