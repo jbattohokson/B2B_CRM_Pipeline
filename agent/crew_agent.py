@@ -16,7 +16,7 @@ off below, before crewai is imported.
 
 Usage:
     .venv/bin/python -m agent.crew_agent "Which reps have deals stuck in negotiation over 45 days?"
-    OLLAMA_MODEL=llama3.2 .venv/bin/python -m agent.crew_agent "..."
+    OLLAMA_MODEL=llama3.1 .venv/bin/python -m agent.crew_agent "..."   # needs 16 GB+ RAM
 """
 
 from __future__ import annotations
@@ -45,7 +45,9 @@ from agent.schema_context import build_schema_context, load_dbt_vars  # noqa: E4
 from agent.sql_tool import QueryError, QueryResult, format_for_llm, run_select  # noqa: E402
 
 DEFAULT_OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1")
+# llama3.2 (3B) by default: llama3.1 (8B) couldn't finish one question on an 8 GB M2
+# (see README Testing status). Set OLLAMA_MODEL=llama3.1 on machines with 16 GB+.
+DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
 
 
 class AgentError(Exception):
@@ -59,7 +61,7 @@ class OllamaUnavailableError(AgentError):
 @dataclass(frozen=True)
 class OllamaConfig:
     base_url: str = DEFAULT_OLLAMA_URL
-    model: str = DEFAULT_OLLAMA_MODEL  # Ollama tag, e.g. "llama3.1" or "mistral"
+    model: str = DEFAULT_OLLAMA_MODEL  # Ollama tag, e.g. "llama3.2", "llama3.1" or "mistral"
     temperature: float = 0.1           # low: we want consistent SQL, not creativity
     request_timeout: float = 300.0     # seconds per LLM call; CPU-only inference is slow
     max_iterations: int = 6            # tool-call/reasoning rounds before the agent must answer

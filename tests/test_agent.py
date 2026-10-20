@@ -299,7 +299,7 @@ def test_analysis_result_grounding():
 @pytest.mark.ollama
 @pytest.mark.skipif(os.getenv("RUN_OLLAMA_TESTS") != "1", reason="set RUN_OLLAMA_TESTS=1 to run against local Ollama")
 def test_live_agent_answers_from_data(marts_db):
-    config = OllamaConfig(model=os.getenv("OLLAMA_MODEL", "llama3.1"))
+    config = OllamaConfig()  # honours OLLAMA_MODEL; defaults to llama3.2
     result = ask("How many open deals are stalled in negotiation?", config, db_path=marts_db)
     assert result.grounded, f"no successful query; tried: {[q.sql for q in result.queries]}"
     assert any("is_stalled" in q.sql or "Negotiation" in q.sql for q in result.successful_queries)

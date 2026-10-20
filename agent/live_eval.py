@@ -8,8 +8,8 @@ gets the SQL right but garbles the numbers in its prose.
 Slow by nature (minutes per question on a laptop CPU), so it isn't part of pytest.
 
 Usage:
-    .venv/bin/python -m agent.live_eval                    # default model (llama3.1)
-    .venv/bin/python -m agent.live_eval --model llama3.2
+    .venv/bin/python -m agent.live_eval                    # default model (llama3.2)
+    .venv/bin/python -m agent.live_eval --model llama3.1   # needs 16 GB+ RAM
 """
 
 from __future__ import annotations
