@@ -113,3 +113,5 @@ Every layer is tested: generator, loader, dbt models, local agent, and Streamlit
 ## Repo hygiene note
 
 `data/raw/*.csv` and `*.duckdb` are gitignored. Both are fully reproducible from `generate_data.py` (seeded) and the loader, so nothing is lost by excluding them. `.env` / `.streamlit/secrets.toml` are gitignored as a precaution, though the local Ollama setup needs no secrets.
+
+**CI:** `.github/workflows/ci.yml` runs on every push and pull request (Python 3.13, pip-cached). It builds everything from scratch, so it uses no committed data or secrets: generate → load → `dbt build` → `pytest -q`. The live-Ollama test skips because `RUN_OLLAMA_TESTS` isn't set, so CI needs no Ollama; the other agent tests (SQL guard, schema context, Ollama checks, CrewAI wiring, retry logic) still run with no model. **The workflow has not run on GitHub yet**, because this repo has no remote. What was checked locally (2026-10-19): the YAML parses, and the same steps in a fresh clone with a fresh Python 3.13 venv passed (85/85 dbt, 144 pytest passed + 1 skipped). A cold `pip install -r requirements.txt` with no cache, crewai included, took 45 s on the dev machine.
