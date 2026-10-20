@@ -9,7 +9,8 @@ from pipelines.generate_data import GeneratorConfig, generate, write_csvs
 # Small enough to run in about a second, big enough to produce open, stalled, won and lost deals.
 SMALL_CONFIG = GeneratorConfig(
     seed=123, n_accounts=150, n_reps=12, n_opportunities=1500,
-    start_date=date(2025, 1, 1), as_of=date(2026, 6, 30),
+    # Mid-quarter as-of, like the real config: there's both QTD bookings and in-quarter pipeline.
+    start_date=date(2025, 1, 1), as_of=date(2026, 5, 15),
 )
 
 
