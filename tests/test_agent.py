@@ -51,7 +51,7 @@ from agent.sql_tool import (
     "sql",
     [
         "SELECT 1",
-        "select count(*) from marts.fct_pipeline_velocity where is_stalled",
+        "select count(*) from marts.fct_lead_funnel where is_won",
         "WITH t AS (SELECT 1 AS x) SELECT x FROM t",
         "  SELECT 1 ;  ",
         "```sql\nSELECT 1\n```",
@@ -68,15 +68,15 @@ def test_clean_sql_strips_fences_and_semicolons():
 @pytest.mark.parametrize(
     "sql, reason",
     [
-        ("INSERT INTO marts.dim_reps VALUES (1)", "INSERT"),
-        ("UPDATE marts.dim_reps SET annual_quota = 0", "UPDATE"),
-        ("DELETE FROM marts.dim_reps", "DELETE"),
-        ("DROP TABLE marts.dim_reps", "DROP"),
+        ("INSERT INTO marts.dim_sdrs VALUES (1)", "INSERT"),
+        ("UPDATE marts.dim_sdrs SET deals_won = 0", "UPDATE"),
+        ("DELETE FROM marts.dim_sdrs", "DELETE"),
+        ("DROP TABLE marts.dim_sdrs", "DROP"),
         ("CREATE TABLE x AS SELECT 1", "CREATE"),
         ("ATTACH 'other.db'", "ATTACH"),
-        ("COPY marts.dim_reps TO 'out.csv'", "COPY"),
+        ("COPY marts.dim_sdrs TO 'out.csv'", "COPY"),
         ("SET enable_external_access = true", "SET"),
-        ("SELECT 1; DROP TABLE marts.dim_reps", "Exactly one statement"),
+        ("SELECT 1; DROP TABLE marts.dim_sdrs", "Exactly one statement"),
         ("SELECT 1; SELECT 2", "Exactly one statement"),
         ("", "empty"),
         ("   ;  ", "empty"),
@@ -98,15 +98,15 @@ def test_non_string_rejected():
 
 def test_run_select_returns_dataframe(marts_db):
     result = run_select(
-        "SELECT account_tier, count(*) AS n FROM marts.fct_pipeline_velocity GROUP BY 1 ORDER BY 1", db_path=marts_db
+        "SELECT lead_source, count(*) AS n FROM marts.fct_lead_funnel GROUP BY 1 ORDER BY 1", db_path=marts_db
     )
-    assert list(result.dataframe.columns) == ["account_tier", "n"]
-    assert set(result.dataframe["account_tier"]) == {"SMB", "Mid-Market", "Enterprise"}
+    assert list(result.dataframe.columns) == ["lead_source", "n"]
+    assert result.dataframe["n"].sum() == 8000 and "paid_search" in set(result.dataframe["lead_source"])
     assert not result.truncated
 
 
 def test_run_select_caps_rows_and_flags_truncation(marts_db):
-    result = run_select("SELECT * FROM marts.fct_pipeline_velocity", db_path=marts_db, max_rows=10)
+    result = run_select("SELECT * FROM marts.fct_lead_funnel", db_path=marts_db, max_rows=10)
     assert len(result.dataframe) == 10
     assert result.truncated
 
@@ -114,20 +114,20 @@ def test_run_select_caps_rows_and_flags_truncation(marts_db):
 def test_external_file_access_is_blocked(marts_db, raw_dir):
     """A SELECT can't read local files through table functions."""
     with pytest.raises(QueryExecutionError, match="(?i)permission"):
-        run_select(f"SELECT * FROM read_csv('{raw_dir / 'dim_reps.csv'}')", db_path=marts_db)
+        run_select(f"SELECT * FROM read_csv('{raw_dir / 'olist_closed_deals_dataset.csv'}')", db_path=marts_db)
 
 
 def test_database_is_not_modified_by_rejected_writes(marts_db):
-    before = run_select("SELECT count(*) AS n FROM marts.dim_reps", db_path=marts_db).dataframe["n"][0]
+    before = run_select("SELECT count(*) AS n FROM marts.dim_sdrs", db_path=marts_db).dataframe["n"][0]
     with pytest.raises(UnsafeQueryError):
-        run_select("DELETE FROM marts.dim_reps", db_path=marts_db)
-    after = run_select("SELECT count(*) AS n FROM marts.dim_reps", db_path=marts_db).dataframe["n"][0]
+        run_select("DELETE FROM marts.dim_sdrs", db_path=marts_db)
+    after = run_select("SELECT count(*) AS n FROM marts.dim_sdrs", db_path=marts_db).dataframe["n"][0]
     assert before == after
 
 
 def test_bad_column_raises_execution_error(marts_db):
     with pytest.raises(QueryExecutionError, match="no_such_column"):
-        run_select("SELECT no_such_column FROM marts.dim_reps", db_path=marts_db)
+        run_select("SELECT no_such_column FROM marts.dim_sdrs", db_path=marts_db)
 
 
 def test_long_query_is_interrupted(marts_db):
@@ -173,7 +173,7 @@ def test_context_lists_real_columns_and_conventions(marts_db):
         if table not in SUMMARIZED_TABLES:
             for column, _ in columns[table]:
                 assert column in context, f"{table}.{column} missing from context"
-    assert "as-of date" in context and "45 days" in context
+    assert "as-of date" in context and "only recorded on won deals" in context
 
 
 def test_context_fits_small_context_window(marts_db):
@@ -251,15 +251,15 @@ def test_ask_rejects_empty_question():
 def test_sql_tool_logs_success_and_returns_markdown(marts_db):
     log = []
     tool = make_sql_tool(log, db_path=marts_db)
-    out = tool.run(sql_query="SELECT count(*) AS stalled FROM marts.fct_pipeline_velocity WHERE is_stalled")
-    assert "stalled" in out and "1 row(s)" in out
+    out = tool.run(sql_query="SELECT count(*) AS won FROM marts.fct_lead_funnel WHERE is_won")
+    assert "842" in out and "1 row(s)" in out
     assert len(log) == 1 and log[0].ok
 
 
 def test_sql_tool_returns_error_text_for_model_to_fix(marts_db):
     log = []
     tool = make_sql_tool(log, db_path=marts_db)
-    out = tool.run(sql_query="DROP TABLE marts.dim_reps")
+    out = tool.run(sql_query="DROP TABLE marts.dim_sdrs")
     assert out.startswith("ERROR:") and "Only SELECT" in out
     assert len(log) == 1 and not log[0].ok and "Only SELECT" in log[0].error
 
@@ -270,11 +270,11 @@ def test_agent_and_task_carry_schema_and_tool(marts_db):
     assert llm.model.endswith("llama3.1")
     context = build_schema_context(marts_db)
     agent = build_agent(llm, make_sql_tool([], marts_db), context, max_iterations=4)
-    assert "marts.fct_pipeline_velocity" in agent.backstory
+    assert "marts.fct_lead_funnel" in agent.backstory
     assert [t.name for t in agent.tools] == ["query_crm_database"]
     assert agent.allow_delegation is False and agent.max_iter == 4
-    task = build_task("Which reps are behind?", agent)
-    assert "Which reps are behind?" in task.description
+    task = build_task("Which lead source converts best?", agent)
+    assert "Which lead source converts best?" in task.description
     assert "Recommendations" in task.expected_output
 
 
@@ -300,9 +300,9 @@ def test_analysis_result_grounding():
 @pytest.mark.skipif(os.getenv("RUN_OLLAMA_TESTS") != "1", reason="set RUN_OLLAMA_TESTS=1 to run against local Ollama")
 def test_live_agent_answers_from_data(marts_db):
     config = OllamaConfig()  # honours OLLAMA_MODEL; defaults to llama3.2
-    result = ask("How many open deals are stalled in negotiation?", config, db_path=marts_db)
+    result = ask("Which lead source converts MQLs into deals best?", config, db_path=marts_db)
     assert result.grounded, f"no successful query; tried: {[q.sql for q in result.queries]}"
-    assert any("is_stalled" in q.sql or "Negotiation" in q.sql for q in result.successful_queries)
+    assert any("lead_source" in q.sql for q in result.successful_queries)
     assert result.answer
 
 
@@ -318,7 +318,7 @@ class _FakeCrew:
     def kickoff(self):
         type(self).attempts += 1
         if type(self).attempts >= 2:
-            self.agent.tools[0].run(sql_query="SELECT count(*) AS n FROM marts.fct_pipeline_velocity")
+            self.agent.tools[0].run(sql_query="SELECT count(*) AS n FROM marts.fct_lead_funnel")
             return type("Out", (), {"raw": "grounded answer"})()
         return type("Out", (), {"raw": '{"name": "query_crm_database", ...}'})()
 

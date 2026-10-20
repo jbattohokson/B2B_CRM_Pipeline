@@ -1,5 +1,5 @@
 name: b2b_crm_pipeline
-version: "1.0.0"
+version: "2.0.0"
 config-version: 2
 profile: b2b_crm_pipeline
 
@@ -11,10 +11,10 @@ target-path: "target"
 clean-targets: ["target", "dbt_packages"]
 
 vars:
-  # "Today" for every as-of metric. Must match the generator's --as-of so open deals line up.
-  as_of_date: "2026-08-15"
-  # An open Negotiation deal older than this many days counts as stalled.
-  stalled_days_threshold: 45
+  # "Today" for every as-of metric: the last close date in the published Olist export.
+  as_of_date: "2018-11-14"
+  # Landing pages with fewer MQLs than this are too small to compare conversion rates.
+  min_landing_page_mqls: 30
 
 models:
   b2b_crm_pipeline:

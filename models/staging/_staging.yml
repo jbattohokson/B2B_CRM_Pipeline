@@ -1,98 +1,41 @@
 version: 2
 
 models:
-  - name: stg_accounts
-    description: One row per account, renamed from raw.accounts.
+  - name: stg_mqls
+    description: One row per marketing-qualified lead, with a cohort month and a cleaned lead source.
     columns:
-      - name: account_id
+      - name: mql_id
         data_tests: [unique, not_null]
-      - name: account_tier
-        data_tests:
-          - accepted_values:
-              arguments:
-                values: ['SMB', 'Mid-Market', 'Enterprise']
-      - name: current_arr
-        description: Closed-Won amount from the trailing 365 days (1-year contracts assumed).
-        data_tests:
-          - accepted_range:
-              arguments:
-                min_value: 0
-
-  - name: stg_reps
-    description: One row per sales rep.
-    columns:
-      - name: rep_id
-        data_tests: [unique, not_null]
-      - name: rep_segment
-        data_tests:
-          - accepted_values:
-              arguments:
-                values: ['SMB', 'Mid-Market', 'Enterprise']
-      - name: annual_quota
+      - name: first_contact_date
+        data_tests: [not_null]
+      - name: lead_source
         data_tests:
           - not_null
-          - accepted_range:
-              arguments:
-                min_value: 1
-
-  - name: stg_dates
-    description: Calendar dimension.
-    columns:
-      - name: date_day
-        data_tests: [unique, not_null]
-
-  - name: stg_opportunities
-    description: One row per opportunity in its current state.
-    columns:
-      - name: opportunity_id
-        data_tests: [unique, not_null]
-      - name: account_id
-        data_tests:
-          - relationships:
-              arguments:
-                to: ref('stg_accounts')
-                field: account_id
-      - name: rep_id
-        data_tests:
-          - relationships:
-              arguments:
-                to: ref('stg_reps')
-                field: rep_id
-      - name: stage_name
-        data_tests:
           - accepted_values:
               arguments:
-                values: ['Prospecting', 'Discovery', 'Demo', 'Negotiation', 'Closed-Won', 'Closed-Lost']
-      - name: stage_probability
-        data_tests:
-          - accepted_range:
-              arguments:
-                min_value: 0
-                max_value: 1
-      - name: amount
-        data_tests:
-          - accepted_range:
-              arguments:
-                min_value: 1
+                values: ['organic_search', 'paid_search', 'social', 'unknown', 'direct_traffic', 'email',
+                         'referral', 'other', 'display', 'other_publicities']
 
-  - name: stg_stage_history
-    description: One row per opportunity per stage entered.
+  - name: stg_closed_deals
+    description: One row per won lead (a signed seller).
     columns:
-      - name: opportunity_id
+      - name: mql_id
         data_tests:
+          - unique
+          - not_null
           - relationships:
               arguments:
-                to: ref('stg_opportunities')
-                field: opportunity_id
-
-  - name: stg_activities
-    description: One row per logged sales activity.
-    columns:
-      - name: activity_id
+                to: ref('stg_mqls')
+                field: mql_id
+      - name: seller_id
         data_tests: [unique, not_null]
-      - name: opportunity_id
+      - name: sdr_id
+        data_tests: [not_null]
+      - name: sr_id
+        data_tests: [not_null]
+      - name: declared_monthly_revenue_brl
+        description: Self-declared monthly revenue in BRL; NULL when the seller declared none.
         data_tests:
-          - relationships:
+          - accepted_range:
               arguments:
-                to: ref('stg_opportunities')
-                field: opportunity_id
+                min_value: 0.01

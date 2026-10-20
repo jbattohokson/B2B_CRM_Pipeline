@@ -86,9 +86,9 @@ def test_live_q2_answer_flags_invented_quota_and_percentages():
 
 
 def test_prompt_constants_are_allowed():
-    answer = "* 45: stall threshold\n* 365: trailing days for TTM"
-    assert find_unverified_figures(answer, [], allowed_values=(45, 365)) == []
-    assert find_unverified_figures(answer, []) == ["45", "365"]
+    answer = "* 90: day window for early conversion\n* 180: longest window tracked"
+    assert find_unverified_figures(answer, [], allowed_values=(90, 180)) == []
+    assert find_unverified_figures(answer, []) == ["90", "180"]
 
 
 def test_row_count_counts_as_verified():

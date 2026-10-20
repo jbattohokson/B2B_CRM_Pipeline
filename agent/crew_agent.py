@@ -1,8 +1,8 @@
-"""Local RevOps analyst agent: CrewAI on Ollama, answering questions with read-only SQL.
+"""Local funnel analyst agent: CrewAI on Ollama, answering questions with read-only SQL.
 
 Flow for one question:
   1. Check that Ollama is reachable and the model is pulled (clear error if not).
-  2. Build a "Senior RevOps Analyst" agent whose backstory carries the live mart
+  2. Build a "Senior Sales Development Analyst" agent whose backstory carries the live mart
      schema and metric definitions (agent/schema_context.py), so the local model
      doesn't guess table or column names.
   3. The agent calls `query_crm_database` (read-only SELECT, agent/sql_tool.py)
@@ -15,7 +15,7 @@ Everything runs locally. CrewAI's tracing and OpenTelemetry export are switched
 off below, before crewai is imported.
 
 Usage:
-    .venv/bin/python -m agent.crew_agent "Which reps have deals stuck in negotiation over 45 days?"
+    .venv/bin/python -m agent.crew_agent "Which lead source converts best?"
     OLLAMA_MODEL=llama3.1 .venv/bin/python -m agent.crew_agent "..."   # needs 16 GB+ RAM
 """
 
@@ -104,8 +104,8 @@ class AnalysisResult:
     def unverified_figures(self) -> list[str]:
         """Numbers in the answer that match no value in any successful query result."""
         frames = [q.result.dataframe for q in self.successful_queries]
-        # Constants stated in the schema briefing are fair to quote.
-        allowed = (load_dbt_vars()["stalled_days_threshold"], 365)
+        # Constants stated in the schema briefing (window lengths, landing-page minimum) are fair to quote.
+        allowed = (30, 60, 90, 180, load_dbt_vars()["min_landing_page_mqls"])
         return find_unverified_figures(self.answer, frames, question=self.question, allowed_values=allowed)
 
     @property
@@ -162,7 +162,7 @@ def make_sql_tool(log: list[QueryRecord], db_path: Path | str | None = None):
     @tool("query_crm_database")
     def query_crm_database(sql_query: str) -> str:
         """Run ONE read-only DuckDB SELECT against the CRM marts and get the result as a
-        markdown table. Use schema-qualified names like marts.fct_pipeline_velocity.
+        markdown table. Use schema-qualified names like marts.fct_lead_funnel.
         Only SELECT (or WITH ... SELECT) is allowed. Aggregate in SQL instead of pulling
         raw rows. Results are capped at 200 rows. If you get an ERROR, fix the SQL and
         call this tool again."""
@@ -189,14 +189,14 @@ def build_llm(config: OllamaConfig) -> LLM:
 
 def build_agent(llm: LLM, sql_tool, schema_context: str, max_iterations: int = 6) -> Agent:
     return Agent(
-        role="Senior RevOps Analyst",
+        role="Senior Sales Development Analyst",
         goal=(
-            "Answer sales leadership's questions about pipeline, forecast and rep performance "
-            "with numbers pulled from the CRM warehouse, then turn them into concrete actions."
+            "Answer sales leadership's questions about lead conversion, lead sources, speed to close "
+            "and SDR/rep output with numbers pulled from the funnel warehouse, then turn them into concrete actions."
         ),
         backstory=(
-            "You are a revenue operations analyst at a B2B SaaS company. You know the company's "
-            "dbt star schema in DuckDB by heart, described below. You never guess a number: every "
+            "You are a sales development analyst at Olist, a marketplace that signs up merchants as sellers. You know the "
+            "company's dbt star schema in DuckDB by heart, described below. You never guess a number: every "
             "figure in your answers comes from a query you ran with the query_crm_database tool. "
             "You only use the tables and columns listed here.\n\n" + schema_context
         ),
@@ -213,8 +213,7 @@ def build_task(question: str, agent: Agent) -> Task:
         description=(
             f"Question from a sales director: {question}\n\n"
             "Steps:\n"
-            "1. Decide which marts table answers it (usually fct_pipeline_velocity or "
-            "dim_sales_performance).\n"
+            "1. Decide which marts table answers it (usually fct_lead_funnel or one of the agg_ tables).\n"
             "2. Call query_crm_database with ONE DuckDB SELECT that computes the answer. "
             "Aggregate in SQL, sort meaningfully, and keep the result under about 25 rows.\n"
             "3. If the tool returns ERROR, read the message, fix the SQL and retry.\n"
@@ -248,7 +247,7 @@ def ask(
     """Answer one natural-language question. Raises AgentError with a user-facing message."""
     question = (question or "").strip()
     if not question:
-        raise AgentError("Ask a question about the pipeline, forecast or reps.")
+        raise AgentError("Ask a question about leads, conversion or reps.")
     config = config or OllamaConfig()
     if not skip_health_check:
         check_ollama(config)
@@ -290,7 +289,7 @@ def ask(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Ask the local RevOps analyst agent a question.")
+    parser = argparse.ArgumentParser(description="Ask the local funnel analyst agent a question.")
     parser.add_argument("question")
     parser.add_argument("--model", default=DEFAULT_OLLAMA_MODEL, help="Ollama model tag (default: %(default)s)")
     parser.add_argument("--base-url", default=DEFAULT_OLLAMA_URL)

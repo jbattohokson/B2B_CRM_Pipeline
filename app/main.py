@@ -1,10 +1,11 @@
-"""Streamlit app: Executive KPI Dashboard, Local AI Revenue Copilot, Pipeline Risk Simulator.
+"""Streamlit app: Funnel KPI Dashboard, Local AI Funnel Copilot, Lead Mix Simulator.
 
 Run from the project root:
     .venv/bin/streamlit run app/main.py
 
 Everything reads the warehouse read-only (see app/data.py). The copilot talks to
 a local Ollama server through agent/crew_agent.py; nothing leaves the machine.
+The data is Olist's real (anonymized) seller-acquisition funnel.
 """
 
 from __future__ import annotations
@@ -32,16 +33,14 @@ from agent.crew_agent import (  # noqa: E402
 from agent.sql_tool import QueryError  # noqa: E402
 from app import charts, data  # noqa: E402
 from app import simulator as sim  # noqa: E402
-from datetime import timedelta  # noqa: E402
 
-st.set_page_config(page_title="Pipeline Velocity & Forecast", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Lead Funnel Conversion", page_icon="📈", layout="wide")
 
-SEGMENTS = ["All"] + data.TIER_ORDER
 SUGGESTED_QUESTIONS = [
-    "Which reps have deals stuck in negotiation over 45 days?",
-    "Which rep has the largest expected revenue gap this quarter?",
-    "What is the stage-to-stage conversion rate out of Demo for Enterprise accounts?",
-    "How does average sales cycle differ by account tier for won deals?",
+    "Which lead source converts MQLs into deals best?",
+    "Which SDR closed the most deals, and how fast?",
+    "How did conversion change between 2017 and 2018 lead cohorts?",
+    "Which business segments close fastest?",
 ]
 
 
@@ -51,33 +50,33 @@ SUGGESTED_QUESTIONS = [
 
 
 @st.cache_data(show_spinner=False)
-def cached_kpis(db: str, segment: str) -> dict:
-    return data.load_kpis(db, segment)
+def cached_kpis(db: str, period: str) -> dict:
+    return data.load_kpis(db, period)
 
 
 @st.cache_data(show_spinner=False)
-def cached_funnel(db: str, segment: str) -> pd.DataFrame:
-    return data.load_funnel(db, segment)
+def cached_sources(db: str, period: str) -> pd.DataFrame:
+    return data.load_source_conversion(db, period)
 
 
 @st.cache_data(show_spinner=False)
-def cached_reps(db: str, segment: str) -> pd.DataFrame:
-    return data.load_rep_performance(db, segment)
+def cached_cohorts(db: str) -> pd.DataFrame:
+    return data.load_cohorts(db)
 
 
 @st.cache_data(show_spinner=False)
-def cached_stalled(db: str, segment: str) -> pd.DataFrame:
-    return data.load_stalled_deals(db, segment)
+def cached_sdrs(db: str) -> pd.DataFrame:
+    return data.load_sdrs(db)
 
 
 @st.cache_data(show_spinner=False)
-def cached_open_deals(db: str) -> pd.DataFrame:
-    return data.load_open_deals(db)
+def cached_reps(db: str) -> pd.DataFrame:
+    return data.load_reps(db)
 
 
 @st.cache_data(show_spinner=False)
-def cached_targets(db: str) -> pd.DataFrame:
-    return data.load_segment_targets(db)
+def cached_segments(db: str) -> pd.DataFrame:
+    return data.load_segments(db)
 
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -118,15 +117,12 @@ def table_view(df: pd.DataFrame, label: str = "Table view") -> None:
 
 db_path = str(data.default_db_path())
 as_of = data.as_of_date()
-quarter_start, quarter_end = data.current_quarter_bounds(as_of)
-quarter = data.quarter_label(as_of)
 mode = theme_mode()
 
 with st.sidebar:
-    st.header("Pipeline Velocity")
-    st.caption(f"As of **{as_of:%b %d, %Y}** · forecasting **{quarter}** "
-               f"(ends {quarter_end - timedelta(days=1):%b %d}).")
-    st.caption("Synthetic, seeded CRM data. See the README's Data honesty section.")
+    st.header("Lead Funnel")
+    st.caption(f"Olist seller-acquisition funnel · data through **{as_of:%b %d, %Y}**.")
+    st.caption("Real, anonymized data (CC BY-NC-SA 4.0). See the README's Data honesty section.")
     st.divider()
     st.subheader("Local AI model")
     models, ollama_error = ollama_models(DEFAULT_OLLAMA_URL)
@@ -151,88 +147,75 @@ except QueryError as exc:
 if missing:
     st.error(
         f"The warehouse is missing {', '.join(missing)}. Build it from the project root:\n\n"
-        "```\n.venv/bin/python pipelines/generate_data.py\n.venv/bin/python pipelines/load_to_duckdb.py\n"
-        "DBT_PROFILES_DIR=. .venv/bin/dbt build\n```",
+        "```\n.venv/bin/python pipelines/load_to_duckdb.py\nDBT_PROFILES_DIR=. .venv/bin/dbt build\n```",
         icon="⚠️",
     )
     st.stop()
 
-st.title("B2B SaaS Pipeline Velocity & Forecast")
-tab_kpi, tab_copilot, tab_sim = st.tabs(["📊 Executive KPIs", "🤖 AI Revenue Copilot", "🎛️ Pipeline Risk Simulator"])
+st.title("B2B Lead Funnel: Conversion, Speed & Rep Output")
+tab_kpi, tab_copilot, tab_sim = st.tabs(["📊 Funnel KPIs", "🤖 AI Funnel Copilot", "🎛️ Lead Mix Simulator"])
 
 
 # ---------------------------------------------------------------------------
-# Tab 1: Executive KPI dashboard
+# Tab 1: Funnel KPI dashboard
 # ---------------------------------------------------------------------------
 
 with tab_kpi:
-    segment = st.segmented_control("Segment", SEGMENTS, default="All", key="kpi_segment") or "All"
-    k = cached_kpis(db_path, segment)
+    period = st.segmented_control("Leads", list(data.PERIODS), default="All leads", key="kpi_period",
+                                  help="2018 leads arrived after the sales team started closing deals "
+                                       "(December 2017). Earlier leads mostly closed months later.") or "All leads"
+    k = cached_kpis(db_path, period)
 
     row = st.container(horizontal=True, gap="small")
-    tile(row, "Open pipeline", charts.money(k["open_pipeline"]), f"{int(k['open_deals'])} open deals")
-    tile(row, "Won QTD", charts.money(k["won_qtd"]), f"of {charts.money(k['quarterly_quota'])} quota")
-    tile(row, "Forecast · CRM", f"{k['attainment_crm']:.0%}", f"{k['attainment_crm'] - 1:+.0%} vs quota",
-         change=True,
-         help="(Won QTD + Σ amount × CRM stage probability for deals closing this quarter) ÷ quarterly quota")
-    tile(row, "Forecast · history", f"{k['attainment_historical']:.0%}",
-         f"{k['attainment_historical'] - 1:+.0%} vs quota", change=True,
-         help="Same, but weighting each deal by the historical win rate from its stage and tier")
-    tile(row, "Stalled deals", f"{int(k['stalled_deals'])}", f"{charts.money(k['stalled_pipeline'])} at risk",
-         help="Open, in Negotiation for more than 45 days")
+    tile(row, "MQLs", f"{int(k['mqls']):,}", "marketing-qualified leads")
+    tile(row, "Deals won", f"{int(k['deals_won']):,}", f"{int(k['active_sdrs'])} SDRs · {int(k['active_reps'])} reps")
+    tile(row, "Conversion", charts.pct(k["conversion_rate"]), "MQL to signed seller",
+         help="Won leads ÷ all leads in the selected period")
+    tile(row, "Median days to close", f"{k['median_days_to_close']:.0f}", "first contact to signed")
+    tile(row, "Closed within 30 days", charts.pct(k["share_won_within_30_days"], 0), "of won deals")
 
-    funnel = cached_funnel(db_path, segment)
-    gap = k["attainment_crm"] - k["attainment_historical"]
-    if gap > 0.02:
-        negotiation = funnel[funnel["stage_name"] == "Negotiation"]
-        hist_win = (negotiation["historical_win_rate_from_stage"] * negotiation["deals_entered"]).sum() / max(
-            negotiation["deals_entered"].sum(), 1
-        )
-        st.info(
-            f"The CRM's stage probabilities project **{gap:.0%} more attainment** than this pipeline has "
-            f"historically converted at. Late stages are over-weighted (Negotiation: 70% in the CRM vs "
-            f"{hist_win:.0%} historically). Plan against the historical number.",
-            icon="ℹ️",
-        )
+    sources = cached_sources(db_path, period)
+    st.subheader("Which lead sources convert")
+    st.caption("MQL-to-deal conversion by source, with 95% intervals. Blue beats the overall rate, red trails it. "
+               "Small sources have wide intervals: don't over-read them.")
+    st.plotly_chart(charts.source_conversion(sources, k["conversion_rate"], mode), use_container_width=True,
+                    theme=None)
+    table_view(sources[["lead_source", "mqls", "deals_won", "conversion_rate", "ci_low", "ci_high",
+                        "median_days_to_close"]])
+
+    cohorts = cached_cohorts(db_path)
+    left, right = st.columns(2)
+    with left:
+        st.subheader("Conversion by lead cohort")
+        st.caption("Month of first contact. The 90-day bar only appears once every lead in the cohort is 90+ "
+                   "days old. Look at the jump in January 2018.")
+        st.plotly_chart(charts.cohort_conversion(cohorts, mode), use_container_width=True, theme=None)
+        table_view(cohorts)
+    with right:
+        st.subheader("Speed to close by cohort")
+        st.caption("Median days from first contact to signed, won deals only. 2017 leads waited months for "
+                   "the sales team to reach them.")
+        st.plotly_chart(charts.cohort_cycle(cohorts, mode), use_container_width=True, theme=None)
 
     left, right = st.columns(2)
     with left:
-        st.subheader("Funnel: how far deals get")
-        st.caption("Share of all created deals that reached each stage, by account tier.")
-        st.plotly_chart(charts.funnel_reach(funnel, mode), use_container_width=True, theme=None)
-        table_view(funnel[["account_tier", "stage_name", "deals_entered", "pct_of_created_reaching_stage",
-                           "conversion_rate", "historical_win_rate_from_stage"]])
+        st.subheader("SDR output")
+        st.caption("Deals won per SDR (top 15). The data only names reps on won deals, so this is volume "
+                   "and speed, not a conversion rate.")
+        sdrs = cached_sdrs(db_path)
+        st.plotly_chart(charts.rep_leaderboard(sdrs, mode), use_container_width=True, theme=None)
+        table_view(sdrs)
     with right:
-        st.subheader("Velocity: days spent per stage")
-        st.caption("Average days in each stage for deals that left it. Hover for the median: "
-                   "Negotiation's long tail is stalled deals.")
-        st.plotly_chart(charts.stage_duration(funnel, mode), use_container_width=True, theme=None)
-        table_view(funnel[["account_tier", "stage_name", "avg_days_in_stage", "median_days_in_stage"]])
-
-    reps = cached_reps(db_path, segment)
-    left, right = st.columns(2)
-    with left:
-        st.subheader("At-risk deals by rep")
-        st.caption("Unweighted pipeline stuck in Negotiation more than 45 days.")
-        if (reps["stalled_deal_count"] > 0).any():
-            st.plotly_chart(charts.stalled_by_rep(reps, mode), use_container_width=True, theme=None)
-        else:
-            st.success("No stalled deals in this segment.", icon="✅")
-        table_view(cached_stalled(db_path, segment), "Stalled deals (table view)")
-    with right:
-        st.subheader(f"{quarter} revenue gap by rep")
-        basis = st.radio("Weighting", ["CRM stage probabilities", "Historical win rates"], horizontal=True,
-                         key="gap_basis")
-        basis_key = "crm" if basis.startswith("CRM") else "historical"
-        st.caption("Quarterly quota − (won QTD + weighted pipeline closing this quarter). "
-                   "Red = projected shortfall, blue = ahead.")
-        st.plotly_chart(charts.revenue_gap_by_rep(reps, mode, basis_key), use_container_width=True, theme=None)
-        table_view(reps[["rep_name", "rep_segment", "quarterly_quota", "won_qtd", "forecast_weighted_pipeline",
-                         "expected_revenue_gap", "expected_revenue_gap_historical", "projected_attainment"]])
+        st.subheader("Closer output")
+        st.caption("Deals won per sales rep (top 15), same caveat.")
+        reps = cached_reps(db_path)
+        st.plotly_chart(charts.rep_leaderboard(reps, mode), use_container_width=True, theme=None)
+        table_view(reps)
+    table_view(cached_segments(db_path), "Won deals by business segment (table view)")
 
 
 # ---------------------------------------------------------------------------
-# Tab 2: Local AI Revenue Copilot
+# Tab 2: Local AI Funnel Copilot
 # ---------------------------------------------------------------------------
 
 
@@ -261,7 +244,7 @@ def render_analysis(result) -> None:
 
 with tab_copilot:
     st.caption(
-        f"Ask in plain English. A local **{model_choice}** model writes read-only SQL against the dbt marts, "
+        f"Ask in plain English. A local **{model_choice}** model writes read-only SQL against the funnel marts, "
         "runs it, and summarizes. Expect about 45–110 s per answer on a laptop CPU. Every query and its "
         "result table is shown, and figures that don't match the data are flagged."
     )
@@ -282,7 +265,7 @@ with tab_copilot:
             else:
                 render_analysis(turn["result"])
 
-    typed = st.chat_input("Ask about pipeline, forecast, or reps…", disabled=bool(ollama_error))
+    typed = st.chat_input("Ask about leads, conversion, or reps…", disabled=bool(ollama_error))
     question = clicked or typed
     if question:
         with st.chat_message("user"):
@@ -308,65 +291,51 @@ with tab_copilot:
 
 
 # ---------------------------------------------------------------------------
-# Tab 3: Pipeline risk simulator
+# Tab 3: Lead mix simulator
 # ---------------------------------------------------------------------------
 
 with tab_sim:
     st.caption(
-        f"Re-project **{quarter}** bookings: won-to-date plus each open deal's amount × win probability, "
-        "counting only deals that still close before quarter end. The baseline uses the same weighting "
-        "with no changes, so the deltas show the effect of the levers alone."
+        "Plan next month's lead volume. Expected deals = planned MQLs from each source × that source's "
+        "conversion rate from 2018 leads (after the sales team ramped). The baseline keeps today's mix at "
+        "your volume, so the deltas show the effect of the levers alone."
     )
+    sim_sources = cached_sources(db_path, "2018 leads")
+    hist_monthly = sim.historical_monthly_mqls(sim_sources, months=5)
+    source_names = list(sim_sources["lead_source"])
+
     controls, results = st.columns([1, 2.2], gap="large")
     with controls:
-        basis_label = st.radio("Win probability source", ["Historical win rates", "CRM stage probabilities"],
-                               key="sim_basis",
-                               help="Historical = conversion actually observed from each stage and tier.")
-        win_change = st.slider("Win-rate change", -50, 50, 0, step=5, format="%d%%",
-                               help="Relative change to every open deal's win probability.")
-        cycle_change = st.slider("Sales-cycle change", -30, 100, 0, step=5, format="%d%%",
-                                 help="Relative change to each open deal's remaining time to close. "
-                                      "Longer cycles push deals past quarter end.")
-        write_off = st.toggle("Write off stalled negotiations",
-                              help="Treat open deals stuck in Negotiation more than 45 days as lost.")
+        volume = st.slider("MQLs per month", 200, 3000, int(round(hist_monthly, -1)), step=50,
+                           help=f"2018 averaged {hist_monthly:,.0f} MQLs a month.")
+        st.markdown("**Shift the mix**")
+        from_source = st.selectbox("Move volume from", source_names,
+                                   index=source_names.index("social") if "social" in source_names else 0)
+        to_source = st.selectbox("…to", source_names,
+                                 index=source_names.index("paid_search") if "paid_search" in source_names else 0)
+        shift = st.slider("Share of total MQLs to move", 0, 30, 0, step=1, format="%d pts")
+        lift = st.slider("Conversion change (all sources)", -30, 50, 0, step=5, format="%d%%",
+                         help="Relative change, e.g. faster SDR follow-up. +10% turns 12% into 13.2%.")
 
-    scenario = sim.Scenario(
-        win_rate_change=win_change / 100,
-        cycle_change=cycle_change / 100,
-        basis="historical" if basis_label.startswith("Historical") else "crm",
-        write_off_stalled=write_off,
-    )
-    deals = cached_open_deals(db_path)
-    targets = cached_targets(db_path)
-    projection = sim.project_by_segment(deals, targets, scenario, as_of, quarter_end)
-    total = projection.set_index("rep_segment").loc["Total"]
+    mix = {(from_source, to_source): shift / 100} if shift and from_source != to_source else {}
+    scenario = sim.Scenario(monthly_mqls=volume, mix_shift=mix, conversion_change=lift / 100)
+    projection = sim.project(sim_sources, scenario)
+    total = projection.set_index("lead_source").loc["Total"]
 
     with results:
-        st.caption("Changes are relative to the baseline (same weighting, no levers moved).")
         row = st.container(horizontal=True, gap="small")
-        delta_money = total["scenario_projected"] - total["baseline_projected"]
-        delta_pts = (total["scenario_attainment"] - total["baseline_attainment"]) * 100
-        moved = abs(delta_money) >= 1
-        tile(row, "Scenario projected", charts.money(total["scenario_projected"]),
-             (("+" if delta_money > 0 else "") + charts.money(delta_money)) if moved else "no change",
-             change=moved)
-        tile(row, "Scenario attainment", f"{total['scenario_attainment']:.0%}",
-             f"{delta_pts:+.0f} pts" if moved else "no change", change=moved)
-        gap_value = total["scenario_gap"]
-        tile(row, "Gap to quota", charts.money(gap_value) if gap_value > 0 else "Covered",
-             "shortfall" if gap_value > 0 else f"{charts.money(-gap_value)} cushion")
-        tile(row, "Deals slipping", f"{int(total['deals_slipped'])}", "out of the quarter",
-             help="Open deals that close this quarter in the baseline but not in the scenario.")
-
-        needed = sim.required_win_rate_change(deals, targets, scenario, as_of, quarter_end)
-        if gap_value > 0:
-            if needed is None:
-                st.warning("Even winning every deal still in the quarter wouldn't reach quota.", icon="⚠️")
-            else:
-                st.info(f"Under these assumptions, win rates would need to rise **{needed:+.0%}** "
-                        "(relative) across the board to hit quota.", icon="ℹ️")
-
-        st.plotly_chart(charts.scenario_attainment(projection, mode), use_container_width=True, theme=None)
-        view = projection[["rep_segment", "quarterly_quota", "won_qtd", "baseline_projected", "scenario_projected",
-                           "baseline_attainment", "scenario_attainment", "deals_slipped"]]
-        table_view(view)
+        delta = total["scenario_deals"] - total["baseline_deals"]
+        moved = abs(delta) >= 0.05
+        tile(row, "Expected deals / month", f"{total['scenario_deals']:.0f}",
+             f"{delta:+.1f} vs baseline" if moved else "no change", change=moved)
+        tile(row, "Planning range", f"{total['scenario_deals_low']:.0f}-{total['scenario_deals_high']:.0f}",
+             "from 95% source intervals")
+        tile(row, "Blended conversion", charts.pct(total["scenario_conversion_rate"]),
+             f"baseline {charts.pct(total['conversion_rate'])}")
+        target = st.number_input("Deal target per month", min_value=1, value=int(round(total["baseline_deals"] * 1.2)))
+        needed = sim.mqls_needed(projection, target)
+        if needed is not None:
+            st.info(f"At this mix and conversion, **{target} deals** a month needs about **{needed:,} MQLs**.",
+                    icon="ℹ️")
+        st.plotly_chart(charts.scenario_deals(projection, mode), use_container_width=True, theme=None)
+        table_view(projection)

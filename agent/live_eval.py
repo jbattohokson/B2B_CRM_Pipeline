@@ -22,24 +22,21 @@ from agent.sql_tool import run_select
 # (question, ground-truth SQL computing the answer directly from the marts)
 EVAL_SET: list[tuple[str, str]] = [
     (
-        "How many open deals are stalled in negotiation, and how much unweighted pipeline do they hold?",
-        "SELECT count(*) AS stalled_deals, sum(amount) AS stalled_pipeline "
-        "FROM marts.fct_pipeline_velocity WHERE is_stalled",
+        "Which lead source has the highest MQL-to-deal conversion rate, and what is it?",
+        "SELECT lead_source, conversion_rate FROM marts.agg_lead_source_conversion "
+        "ORDER BY conversion_rate DESC LIMIT 1",
     ),
     (
-        "Which rep has the largest expected revenue gap this quarter, and how big is it?",
-        "SELECT rep_name, expected_revenue_gap FROM marts.dim_sales_performance "
-        "ORDER BY expected_revenue_gap DESC LIMIT 1",
+        "What share of all MQLs became deals?",
+        "SELECT avg(is_won::INT) AS conversion_rate FROM marts.fct_lead_funnel",
     ),
     (
-        "What is the stage-to-stage conversion rate out of Demo for Enterprise accounts?",
-        "SELECT conversion_rate FROM marts.agg_stage_conversion "
-        "WHERE account_tier = 'Enterprise' AND stage_name = 'Demo'",
+        "Which SDR closed the most deals, and what was their median days to close?",
+        "SELECT sdr_label, deals_won, median_days_to_close FROM marts.dim_sdrs ORDER BY deals_won DESC LIMIT 1",
     ),
     (
-        "What is the average sales cycle in days for won deals, by account tier?",
-        "SELECT account_tier, round(avg(sales_cycle_days), 1) AS avg_cycle_days "
-        "FROM marts.fct_pipeline_velocity WHERE is_won GROUP BY 1 ORDER BY 2",
+        "What is the median number of days from first contact to close for won deals, by business segment?",
+        "SELECT business_segment, median_days_to_close FROM marts.agg_segment_summary ORDER BY deals_won DESC LIMIT 10",
     ),
 ]
 

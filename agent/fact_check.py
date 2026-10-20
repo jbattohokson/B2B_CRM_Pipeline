@@ -12,8 +12,8 @@ allowing for:
 - shorthand money ($1.4M or $212k match 1,373,500 / 212,400 at 1-2 significant digits).
 
 Figures that also appear in the question (e.g. "over 45 days") are allowed, as
-are known constants from the schema briefing (the stall threshold, the 365-day
-TTM window) and small integers (<= 10), which are mostly list numbering and
+are known constants from the schema briefing (the 30/60/90/180-day windows and
+the landing-page minimum) and small integers (<= 10), which are mostly list numbering and
 counts too noisy to judge.
 """
 
@@ -53,7 +53,7 @@ def extract_figures(text: str) -> list[tuple[str, float, str | None]]:
 
 
 def _numeric_values(frames: Iterable[pd.DataFrame]) -> list[float]:
-    """Every numeric cell, plus each result's row count ("21 reps have stalled deals" = 21 rows)."""
+    """Every numeric cell, plus each result's row count ("21 SDRs closed deals" = 21 rows)."""
     values = []
     for df in frames:
         values.append(float(len(df)))

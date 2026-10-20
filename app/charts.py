@@ -2,10 +2,9 @@
 
 Palette (validated with the dataviz skill's validate_palette.js on 2026-10-19,
 light and dark, all checks passing):
-- Ordinal tier ramp (SMB -> Mid-Market -> Enterprise): one blue hue, light to dark.
-  Tiers are ordered, so they get a ramp, not unrelated categorical hues.
-- Two-series categorical (baseline vs scenario): blue, orange.
-- Diverging polarity (ahead of quota vs shortfall): blue vs red poles.
+- Single-series charts use the primary blue.
+- Two-series categorical (baseline vs scenario, to-date vs 90-day): blue, orange.
+- Above vs below the overall average: blue vs red poles.
 
 Marks: thin bars with rounded data-ends, a small gap between bars, hairline
 solid gridlines, no dual axes, and a hover tooltip on every mark. Every chart
@@ -19,10 +18,9 @@ import plotly.graph_objects as go
 
 PALETTES = {
     "light": {
-        "tiers": {"SMB": "#86b6ef", "Mid-Market": "#2a78d6", "Enterprise": "#104281"},
         "series": ["#2a78d6", "#eb6834"],
-        "ahead": "#2a78d6",
-        "short": "#e34948",
+        "above": "#2a78d6",
+        "below": "#e34948",
         "ink": "#0b0b0b",
         "ink_secondary": "#52514e",
         "muted": "#898781",
@@ -30,10 +28,9 @@ PALETTES = {
         "axis": "#c3c2b7",
     },
     "dark": {
-        "tiers": {"SMB": "#9ec5f4", "Mid-Market": "#3987e5", "Enterprise": "#184f95"},
         "series": ["#3987e5", "#d95926"],
-        "ahead": "#3987e5",
-        "short": "#e66767",
+        "above": "#3987e5",
+        "below": "#e66767",
         "ink": "#f0efec",
         "ink_secondary": "#c3c2b7",
         "muted": "#898781",
@@ -45,15 +42,9 @@ PALETTES = {
 FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif'
 
 
-def money(value: float) -> str:
-    """Compact USD: $1.37M, $212k, $950."""
-    sign = "-" if value < 0 else ""
-    v = abs(value)
-    if v >= 1e6:
-        return f"{sign}${v / 1e6:.2f}M"
-    if v >= 1e3:
-        return f"{sign}${v / 1e3:.0f}k"
-    return f"{sign}${v:,.0f}"
+def pct(value: float, digits: int = 1) -> str:
+    """0.1053 -> '10.5%'."""
+    return f"{value * 100:.{digits}f}%"
 
 
 def _base_layout(fig: go.Figure, mode: str, height: int, **axes) -> go.Figure:
@@ -79,89 +70,82 @@ def _base_layout(fig: go.Figure, mode: str, height: int, **axes) -> go.Figure:
     return fig
 
 
-def funnel_reach(funnel: pd.DataFrame, mode: str) -> go.Figure:
-    """Share of created deals that reach each stage, grouped by tier."""
+def source_conversion(sources: pd.DataFrame, overall_rate: float, mode: str) -> go.Figure:
+    """Conversion by lead source with 95% intervals. Blue = above the overall rate, red = below."""
     p = PALETTES[mode]
+    rows = sources.sort_values("conversion_rate")
+    colors = [p["above"] if r >= overall_rate else p["below"] for r in rows["conversion_rate"]]
+    fig = go.Figure(go.Bar(
+        x=rows["conversion_rate"], y=rows["lead_source"], orientation="h", marker_color=colors,
+        error_x=dict(type="data", symmetric=False, array=rows["ci_high"] - rows["conversion_rate"],
+                     arrayminus=rows["conversion_rate"] - rows["ci_low"], color=p["ink_secondary"], thickness=1),
+        customdata=rows[["mqls", "deals_won", "ci_low", "ci_high"]],
+        hovertemplate=("<b>%{y}</b><br>Conversion: %{x:.1%} (95% CI %{customdata[2]:.1%}-%{customdata[3]:.1%})"
+                       "<br>%{customdata[1]:,} deals from %{customdata[0]:,} MQLs<extra></extra>"),
+    ))
+    fig.add_vline(x=overall_rate, line_width=1, line_dash="dot", line_color=p["ink_secondary"],
+                  annotation_text=f"overall {overall_rate:.1%}", annotation_position="top",
+                  annotation_font=dict(color=p["ink_secondary"], size=12))
+    return _base_layout(fig, mode, max(300, 30 * len(rows) + 60),
+                        x={"tickformat": ".0%", "title": "MQL-to-deal conversion"}, y={"showgrid": False})
+
+
+def cohort_conversion(cohorts: pd.DataFrame, mode: str) -> go.Figure:
+    """Conversion by month of first contact: to date, and within 90 days where the window is complete."""
+    p = PALETTES[mode]
+    labels = pd.to_datetime(cohorts["cohort_month"]).dt.strftime("%b %Y")
     fig = go.Figure()
-    for tier, rows in funnel.groupby("account_tier", observed=True):
+    for name, col, color in (("Converted to date", "conversion_rate_to_date", p["series"][0]),
+                             ("Within 90 days", "conversion_rate_90d", p["series"][1])):
         fig.add_bar(
-            name=tier, x=rows["stage_name"], y=rows["pct_of_created_reaching_stage"],
-            marker_color=p["tiers"][tier],
-            customdata=rows[["deals_entered", "conversion_rate"]],
-            hovertemplate=(f"<b>{tier}</b> · %{{x}}<br>Reached stage: %{{y:.0%}} of created deals"
-                           "<br>Deals entered: %{customdata[0]:,}<br>Converted onward: %{customdata[1]:.0%}"
-                           "<extra></extra>"),
+            name=name, x=labels, y=cohorts[col], marker_color=color,
+            customdata=cohorts[["mqls", "deals_won"]],
+            hovertemplate=(f"<b>{name}</b> · %{{x}}<br>%{{y:.1%}}<br>Cohort: %{{customdata[0]:,}} MQLs, "
+                           "%{customdata[1]:,} deals to date<extra></extra>"),
         )
-    return _base_layout(fig, mode, 320, y={"tickformat": ".0%", "range": [0, 1.02], "title": "Share of created deals"},
+    return _base_layout(fig, mode, 330, y={"tickformat": ".0%", "title": "Share of cohort converted"},
                         x={"showgrid": False})
 
 
-def stage_duration(funnel: pd.DataFrame, mode: str) -> go.Figure:
-    """Average days a deal spends in each stage, by tier (resolved stage visits)."""
+def cohort_cycle(cohorts: pd.DataFrame, mode: str) -> go.Figure:
+    """Median days from first contact to close, by cohort (won deals only)."""
     p = PALETTES[mode]
-    fig = go.Figure()
-    for tier, rows in funnel.groupby("account_tier", observed=True):
-        fig.add_bar(
-            name=tier, x=rows["stage_name"], y=rows["avg_days_in_stage"],
-            marker_color=p["tiers"][tier],
-            customdata=rows[["median_days_in_stage"]],
-            hovertemplate=(f"<b>{tier}</b> · %{{x}}<br>Average: %{{y:.1f}} days"
-                           "<br>Median: %{customdata[0]:.0f} days<extra></extra>"),
-        )
-    return _base_layout(fig, mode, 320, y={"title": "Average days in stage"}, x={"showgrid": False})
-
-
-def stalled_by_rep(reps: pd.DataFrame, mode: str) -> go.Figure:
-    """Pipeline stuck in Negotiation past the stall threshold, per rep (single series)."""
-    p = PALETTES[mode]
-    rows = reps[reps["stalled_deal_count"] > 0].sort_values("stalled_pipeline_amount")
+    labels = pd.to_datetime(cohorts["cohort_month"]).dt.strftime("%b %Y")
     fig = go.Figure(go.Bar(
-        x=rows["stalled_pipeline_amount"], y=rows["rep_name"], orientation="h",
-        marker_color=p["series"][0],
-        customdata=rows[["stalled_deal_count", "rep_segment"]],
-        hovertemplate=("<b>%{y}</b> (%{customdata[1]})<br>Stalled pipeline: $%{x:,.0f}"
-                       "<br>Stalled deals: %{customdata[0]}<extra></extra>"),
+        x=labels, y=cohorts["median_days_to_close"], marker_color=p["series"][0],
+        customdata=cohorts[["deals_won"]],
+        hovertemplate="<b>%{x}</b><br>Median %{y:.0f} days to close<br>%{customdata[0]:,} deals<extra></extra>",
     ))
-    return _base_layout(fig, mode, max(240, 22 * len(rows) + 60),
-                        x={"tickprefix": "$", "tickformat": "~s", "title": "Stalled pipeline (unweighted)"},
-                        y={"showgrid": False})
+    return _base_layout(fig, mode, 330, y={"title": "Median days to close"}, x={"showgrid": False})
 
 
-def revenue_gap_by_rep(reps: pd.DataFrame, mode: str, basis: str = "crm") -> go.Figure:
-    """Expected revenue gap per rep: right of zero = projected shortfall, left = ahead of quota."""
+def rep_leaderboard(reps: pd.DataFrame, mode: str, top: int = 15) -> go.Figure:
+    """Deals won per SDR or rep (top N), with speed in the tooltip."""
     p = PALETTES[mode]
-    col = "expected_revenue_gap" if basis == "crm" else "expected_revenue_gap_historical"
-    rows = reps.sort_values(col)
-    colors = [p["short"] if v > 0 else p["ahead"] for v in rows[col]]
+    rows = reps.head(top).sort_values("deals_won")
     fig = go.Figure(go.Bar(
-        x=rows[col], y=rows["rep_name"], orientation="h", marker_color=colors,
-        customdata=rows[["rep_segment", "quarterly_quota", "won_qtd"]],
-        hovertemplate=("<b>%{y}</b> (%{customdata[0]})<br>Gap: $%{x:,.0f}"
-                       "<br>Quarterly quota: $%{customdata[1]:,.0f}<br>Won QTD: $%{customdata[2]:,.0f}"
+        x=rows["deals_won"], y=rows["label"], orientation="h", marker_color=p["series"][0],
+        customdata=rows[["median_days_to_close", "share_closed_within_30_days", "top_lead_source"]],
+        hovertemplate=("<b>%{y}</b><br>%{x:,} deals won<br>Median %{customdata[0]:.0f} days to close"
+                       "<br>%{customdata[1]:.0%} closed within 30 days<br>Top source: %{customdata[2]}"
                        "<extra></extra>"),
     ))
-    fig.add_vline(x=0, line_width=1, line_color=p["axis"])
-    return _base_layout(fig, mode, max(320, 18 * len(rows) + 60),
-                        x={"tickprefix": "$", "tickformat": "~s",
-                           "title": "← ahead of quota · projected shortfall →"},
-                        y={"showgrid": False})
+    return _base_layout(fig, mode, max(280, 22 * len(rows) + 60),
+                        x={"title": "Deals won"}, y={"showgrid": False})
 
 
-def scenario_attainment(projection: pd.DataFrame, mode: str) -> go.Figure:
-    """Baseline vs scenario projected attainment per segment, with a 100% quota reference."""
+def scenario_deals(projection: pd.DataFrame, mode: str) -> go.Figure:
+    """Baseline vs scenario expected deals per month, by lead source."""
     p = PALETTES[mode]
-    rows = projection[projection["rep_segment"] != "Total"]
+    rows = projection[projection["lead_source"] != "Total"].sort_values("baseline_deals", ascending=False)
     fig = go.Figure()
-    for name, col, color in (("Baseline", "baseline_attainment", p["series"][0]),
-                             ("Scenario", "scenario_attainment", p["series"][1])):
+    for name, col, color in (("Baseline", "baseline_deals", p["series"][0]),
+                             ("Scenario", "scenario_deals", p["series"][1])):
+        mql_col = "baseline_mqls" if name == "Baseline" else "scenario_mqls"
         fig.add_bar(
-            name=name, x=rows["rep_segment"], y=rows[col], marker_color=color,
-            customdata=rows[[col.replace("attainment", "projected"), "quarterly_quota"]],
-            hovertemplate=(f"<b>{name}</b> · %{{x}}<br>Projected: $%{{customdata[0]:,.0f}}"
-                           "<br>Quota: $%{customdata[1]:,.0f}<br>Attainment: %{y:.0%}<extra></extra>"),
+            name=name, x=rows["lead_source"], y=rows[col], marker_color=color,
+            customdata=rows[[mql_col]],
+            hovertemplate=(f"<b>{name}</b> · %{{x}}<br>%{{y:.1f}} expected deals/month"
+                           "<br>from %{customdata[0]:.0f} MQLs<extra></extra>"),
         )
-    fig.add_hline(y=1.0, line_width=1, line_color=p["ink_secondary"],
-                  annotation_text="Quota", annotation_position="top left",
-                  annotation_font=dict(color=p["ink_secondary"], size=12))
-    return _base_layout(fig, mode, 340, y={"tickformat": ".0%", "title": "Projected attainment"},
-                        x={"showgrid": False})
+    return _base_layout(fig, mode, 340, y={"title": "Expected deals per month"}, x={"showgrid": False})

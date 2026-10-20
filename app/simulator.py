@@ -1,128 +1,95 @@
-"""Pipeline risk simulator: re-project current-quarter bookings under what-if assumptions.
+"""Lead mix simulator: how many deals would a different MQL volume and source mix produce?
 
-Projected bookings = won QTD + sum(amount x win probability) over open deals
-expected to close by quarter end. This is the same definition as
-dim_sales_performance, so a zero-change scenario reproduces the mart's numbers
-exactly (a test checks this).
+Expected deals for a source = planned MQLs from that source x its historical
+conversion rate. The baseline is the historical volume and mix, so a zero-change
+scenario reproduces the deals actually won (a test checks this).
 
 The levers:
-- win_rate_change: relative change to every open deal's win probability
-  (+10% turns 0.40 into 0.44), clipped to [0, 1].
-- cycle_change: relative change to the time each open deal has left before it
-  closes. +50% means a deal expected in 20 days now lands in 30, which can push
-  it past quarter end and out of this quarter's forecast.
-- basis: weight deals by the CRM's stage probabilities ("crm") or by historical
-  win rates from each stage and tier ("historical").
-- write_off_stalled: treat deals stalled in Negotiation as lost (probability 0).
+- monthly_mqls: total MQLs per month.
+- mix_shift: points of the MQL mix moved from one source to another
+  (e.g. move 10 points of volume from social to paid search).
+- conversion_change: relative change to every source's conversion rate,
+  for example better SDR follow-up (+10% turns 12% into 13.2%).
+
+Uncertainty comes from each source's 95% Wilson interval. The low and high
+totals assume every source lands at its bound together, so the range is wide on
+purpose: it's a planning band, not a forecast interval.
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
-from datetime import date
+from dataclasses import dataclass, field
 
-import numpy as np
 import pandas as pd
-
-BASES = {"crm": "crm_probability", "historical": "historical_probability"}
 
 
 @dataclass(frozen=True)
 class Scenario:
-    win_rate_change: float = 0.0   # -1.0 .. +1.0 (relative)
-    cycle_change: float = 0.0      # -0.5 .. +1.0 (relative to days remaining)
-    basis: str = "crm"
-    write_off_stalled: bool = False
+    monthly_mqls: float
+    mix_shift: dict[tuple[str, str], float] = field(default_factory=dict)  # (from, to) -> share points (0-1)
+    conversion_change: float = 0.0  # relative, -0.5 .. +1.0
 
     def __post_init__(self) -> None:
-        if self.basis not in BASES:
-            raise ValueError(f"basis must be one of {list(BASES)}")
-        if self.win_rate_change < -1:
-            raise ValueError("win_rate_change can't go below -100%")
-        if self.cycle_change <= -1:
-            raise ValueError("cycle_change must be above -100%")
+        if self.monthly_mqls < 0:
+            raise ValueError("monthly_mqls can't be negative")
+        if self.conversion_change <= -1:
+            raise ValueError("conversion_change must be above -100%")
+        if any(v < 0 for v in self.mix_shift.values()):
+            raise ValueError("mix shifts are amounts to move, so they must be >= 0")
 
 
-def apply_scenario(open_deals: pd.DataFrame, scenario: Scenario, as_of: date, quarter_end: date) -> pd.DataFrame:
-    """Per-deal scenario columns: probability, simulated close date, in-quarter flag, expected value."""
-    deals = open_deals.copy()
-    prob = deals[BASES[scenario.basis]].astype(float) * (1 + scenario.win_rate_change)
-    if scenario.write_off_stalled:
-        prob = prob.where(~deals["is_stalled"].astype(bool), 0.0)
-    deals["sim_probability"] = prob.clip(0.0, 1.0)
-
-    close = pd.to_datetime(deals["close_date"])
-    days_left = (close - pd.Timestamp(as_of)).dt.days.clip(lower=0)
-    # Ceil, so a stretched cycle never pulls a deal earlier through rounding.
-    sim_days = np.ceil(days_left * (1 + scenario.cycle_change)).astype(int)
-    deals["sim_close_date"] = (pd.Timestamp(as_of) + pd.to_timedelta(sim_days, unit="D")).dt.date
-    deals["sim_in_quarter"] = (deals["sim_close_date"] > as_of) & (deals["sim_close_date"] < quarter_end)
-    deals["sim_expected"] = np.where(deals["sim_in_quarter"], deals["amount"] * deals["sim_probability"], 0.0)
-    return deals
+def historical_monthly_mqls(sources: pd.DataFrame, months: int) -> float:
+    return float(sources["mqls"].sum()) / months
 
 
-def project_by_segment(
-    open_deals: pd.DataFrame,
-    targets: pd.DataFrame,
-    scenario: Scenario,
-    as_of: date,
-    quarter_end: date,
-) -> pd.DataFrame:
-    """Baseline vs scenario projected bookings and attainment per rep segment, plus a Total row.
+def apply_mix_shift(shares: pd.Series, mix_shift: dict[tuple[str, str], float]) -> pd.Series:
+    """Move share points between sources. A source can't give away more than it has."""
+    out = shares.astype(float).copy()
+    for (source, target), amount in mix_shift.items():
+        if source not in out.index or target not in out.index:
+            raise ValueError(f"Unknown lead source in mix shift: {source!r} -> {target!r}")
+        moved = min(amount, out[source])
+        out[source] -= moved
+        out[target] += moved
+    return out
 
-    The baseline uses the same probability basis with no other changes, so the
-    delta isolates the effect of the levers.
+
+def project(sources: pd.DataFrame, scenario: Scenario) -> pd.DataFrame:
+    """Per-source baseline vs scenario MQLs and expected deals, plus a Total row.
+
+    sources needs lead_source, mqls, conversion_rate, ci_low, ci_high (as from
+    app.data.load_source_conversion). The baseline keeps the historical mix at the
+    scenario's monthly volume, so the delta isolates the mix and conversion levers.
     """
-    baseline = apply_scenario(open_deals, Scenario(basis=scenario.basis), as_of, quarter_end)
-    simulated = apply_scenario(open_deals, scenario, as_of, quarter_end)
+    df = sources.set_index("lead_source")
+    hist_share = df["mqls"] / df["mqls"].sum()
+    scen_share = apply_mix_shift(hist_share, scenario.mix_shift)
+    lift = 1 + scenario.conversion_change
 
-    def by_segment(deals: pd.DataFrame, name: str) -> pd.Series:
-        return deals.groupby("rep_segment")["sim_expected"].sum().rename(name)
+    out = pd.DataFrame(index=df.index)
+    out["baseline_mqls"] = hist_share * scenario.monthly_mqls
+    out["scenario_mqls"] = scen_share * scenario.monthly_mqls
+    out["conversion_rate"] = df["conversion_rate"]
+    out["scenario_conversion_rate"] = (df["conversion_rate"] * lift).clip(upper=1.0)
+    out["baseline_deals"] = out["baseline_mqls"] * df["conversion_rate"]
+    out["scenario_deals"] = out["scenario_mqls"] * out["scenario_conversion_rate"]
+    out["scenario_deals_low"] = out["scenario_mqls"] * (df["ci_low"] * lift).clip(upper=1.0)
+    out["scenario_deals_high"] = out["scenario_mqls"] * (df["ci_high"] * lift).clip(upper=1.0)
 
-    out = (
-        targets.set_index("rep_segment")
-        .join(by_segment(baseline, "baseline_pipeline"))
-        .join(by_segment(simulated, "scenario_pipeline"))
-        .join(simulated.groupby("rep_segment")["sim_in_quarter"].sum().rename("scenario_deals_in_quarter"))
-        .join(baseline.groupby("rep_segment")["sim_in_quarter"].sum().rename("baseline_deals_in_quarter"))
-        .fillna(0.0)
+    total = out.sum()
+    total["conversion_rate"] = total["baseline_deals"] / total["baseline_mqls"] if total["baseline_mqls"] else 0.0
+    total["scenario_conversion_rate"] = (
+        total["scenario_deals"] / total["scenario_mqls"] if total["scenario_mqls"] else 0.0
     )
-    total = out.sum().rename("Total")
-    out = pd.concat([out, total.to_frame().T])
-    out["baseline_projected"] = out["won_qtd"] + out["baseline_pipeline"]
-    out["scenario_projected"] = out["won_qtd"] + out["scenario_pipeline"]
-    out["baseline_attainment"] = out["baseline_projected"] / out["quarterly_quota"]
-    out["scenario_attainment"] = out["scenario_projected"] / out["quarterly_quota"]
-    out["scenario_gap"] = out["quarterly_quota"] - out["scenario_projected"]
-    out["deals_slipped"] = (out["baseline_deals_in_quarter"] - out["scenario_deals_in_quarter"]).astype(int)
-    out.index.name = "rep_segment"
+    out = pd.concat([out, total.rename("Total").to_frame().T])
+    out.index.name = "lead_source"
     return out.reset_index()
 
 
-def required_win_rate_change(
-    open_deals: pd.DataFrame, targets: pd.DataFrame, scenario: Scenario, as_of: date, quarter_end: date
-) -> float | None:
-    """Smallest uniform win-rate change (other levers held) that reaches 100% of quota in total.
-
-    None if even certain wins (probability 1 for every deal in the quarter) fall short.
-    """
-    def total_at(change: float) -> float:
-        s = Scenario(change, scenario.cycle_change, scenario.basis, scenario.write_off_stalled)
-        row = project_by_segment(open_deals, targets, s, as_of, quarter_end).iloc[-1]
-        return row["scenario_projected"] - row["quarterly_quota"]
-
-    if total_at(0.0) >= 0:
-        return 0.0
-    # Probabilities clip at 1, so the reachable ceiling is a large multiplier.
-    high = 50.0
-    if total_at(high) < 0:
+def mqls_needed(projection: pd.DataFrame, target_deals: float) -> float | None:
+    """MQLs per month the scenario's mix and conversion need to reach target_deals (None if conversion is 0)."""
+    rate = float(projection.set_index("lead_source").loc["Total", "scenario_conversion_rate"])
+    if rate <= 0:
         return None
-    low = 0.0
-    for _ in range(40):  # bisection to well under 0.1 percentage points
-        mid = (low + high) / 2
-        if total_at(mid) >= 0:
-            high = mid
-        else:
-            low = mid
-    return math.ceil(high * 1000) / 1000
+    return math.ceil(target_deals / rate)

@@ -1,22 +1,20 @@
-"""Load the raw CRM CSVs into DuckDB as typed, validated tables in the `raw` schema.
+"""Load the real Olist Marketing Funnel CSVs into DuckDB as typed, validated tables in the `raw` schema.
 
-    data/raw/dim_accounts.csv       -> raw.accounts
-    data/raw/dim_reps.csv           -> raw.reps
-    data/raw/dim_date.csv           -> raw.dates
-    data/raw/fct_opportunities.csv  -> raw.opportunities
-    data/raw/fct_stage_history.csv  -> raw.stage_history
-    data/raw/fct_activities.csv     -> raw.activities
+    data/raw/olist_marketing_qualified_leads_dataset.csv  -> raw.mqls
+    data/raw/olist_closed_deals_dataset.csv               -> raw.closed_deals
 
 What it does:
 - Checks each CSV's header against an explicit column contract (names, order,
   types), so the loader never relies on DuckDB guessing types.
 - Trims whitespace on every text column and turns empty strings into NULL.
-- Runs integrity checks (primary keys, foreign keys, allowed stage values,
-  amount/probability ranges, date ordering) inside the same transaction as the
-  load. If any check fails, the whole load rolls back and whatever was in the
-  database before stays untouched.
+- Runs integrity checks (primary keys, the deal-to-lead foreign key, allowed
+  lead sources, required fields, non-negative declared figures) inside the same
+  transaction as the load. If any check fails, the whole load rolls back and
+  whatever was in the database before stays untouched.
 
-dbt reads these tables as sources. Business logic belongs in dbt, not here.
+Known quirks in the real data are flagged downstream in dbt, not rejected here
+(one deal closes two days before its lead's first contact). Business logic
+belongs in dbt.
 
 Usage:
     .venv/bin/python pipelines/load_to_duckdb.py
@@ -37,7 +35,11 @@ DEFAULT_RAW_DIR = PROJECT_ROOT / "data" / "raw"
 DEFAULT_DB_PATH = PROJECT_ROOT / "crm_analytics.duckdb"
 RAW_SCHEMA = "raw"
 
-VALID_STAGES = ("Prospecting", "Discovery", "Demo", "Negotiation", "Closed-Won", "Closed-Lost")
+# Every lead source value in the published dataset. NULL (60 leads) is allowed and becomes 'unknown' in dbt.
+VALID_ORIGINS = (
+    "organic_search", "paid_search", "social", "unknown", "direct_traffic", "email",
+    "referral", "other", "display", "other_publicities",
+)
 
 
 @dataclass(frozen=True)
@@ -52,104 +54,49 @@ class TableContract:
 
 CONTRACTS: tuple[TableContract, ...] = (
     TableContract(
-        table="accounts",
-        csv_name="dim_accounts.csv",
+        table="mqls",
+        csv_name="olist_marketing_qualified_leads_dataset.csv",
         columns={
-            "account_id": "VARCHAR",
-            "company_name": "VARCHAR",
-            "industry": "VARCHAR",
-            "arr": "BIGINT",
-            "employee_count": "INTEGER",
-            "tier": "VARCHAR",
-            "region": "VARCHAR",
+            "mql_id": "VARCHAR",
+            "first_contact_date": "DATE",
+            "landing_page_id": "VARCHAR",
+            "origin": "VARCHAR",
         },
-        primary_key="account_id",
+        primary_key="mql_id",
     ),
     TableContract(
-        table="reps",
-        csv_name="dim_reps.csv",
+        table="closed_deals",
+        csv_name="olist_closed_deals_dataset.csv",
         columns={
-            "rep_id": "VARCHAR",
-            "rep_name": "VARCHAR",
-            "region": "VARCHAR",
-            "segment": "VARCHAR",
-            "annual_quota": "BIGINT",
+            "mql_id": "VARCHAR",
+            "seller_id": "VARCHAR",
+            "sdr_id": "VARCHAR",
+            "sr_id": "VARCHAR",
+            "won_date": "TIMESTAMP",
+            "business_segment": "VARCHAR",
+            "lead_type": "VARCHAR",
+            "lead_behaviour_profile": "VARCHAR",
+            "has_company": "BOOLEAN",
+            "has_gtin": "BOOLEAN",
+            "average_stock": "VARCHAR",
+            "business_type": "VARCHAR",
+            "declared_product_catalog_size": "DOUBLE",
+            "declared_monthly_revenue": "DOUBLE",
         },
-        primary_key="rep_id",
-    ),
-    TableContract(
-        table="dates",
-        csv_name="dim_date.csv",
-        columns={
-            "date_key": "INTEGER",
-            "date_day": "DATE",
-            "year": "INTEGER",
-            "quarter": "INTEGER",
-            "quarter_label": "VARCHAR",
-            "month": "INTEGER",
-            "month_name": "VARCHAR",
-            "day_of_month": "INTEGER",
-            "day_of_week": "INTEGER",
-            "day_name": "VARCHAR",
-            "iso_week": "INTEGER",
-            "is_weekend": "BOOLEAN",
-            "first_day_of_month": "DATE",
-            "first_day_of_quarter": "DATE",
-        },
-        primary_key="date_day",
-    ),
-    TableContract(
-        table="opportunities",
-        csv_name="fct_opportunities.csv",
-        columns={
-            "opportunity_id": "VARCHAR",
-            "account_id": "VARCHAR",
-            "rep_id": "VARCHAR",
-            "created_date": "DATE",
-            "close_date": "DATE",
-            "stage": "VARCHAR",
-            "stage_entered_date": "DATE",
-            "amount": "DECIMAL(14,2)",
-            "probability": "DECIMAL(5,4)",
-        },
-        primary_key="opportunity_id",
-    ),
-    TableContract(
-        table="stage_history",
-        csv_name="fct_stage_history.csv",
-        columns={
-            "opportunity_id": "VARCHAR",
-            "stage_sequence": "INTEGER",
-            "stage": "VARCHAR",
-            "entered_date": "DATE",
-            "exited_date": "DATE",
-        },
-        # Composite key: one row per opportunity per stage step.
-        primary_key="opportunity_id || '#' || stage_sequence",
-    ),
-    TableContract(
-        table="activities",
-        csv_name="fct_activities.csv",
-        columns={
-            "activity_id": "VARCHAR",
-            "opportunity_id": "VARCHAR",
-            "activity_type": "VARCHAR",
-            "activity_timestamp": "TIMESTAMP",
-        },
-        primary_key="activity_id",
+        primary_key="mql_id",
     ),
 )
 
 # (child table, child column, parent table, parent column)
-FOREIGN_KEYS = (
-    ("opportunities", "account_id", "accounts", "account_id"),
-    ("opportunities", "rep_id", "reps", "rep_id"),
-    ("stage_history", "opportunity_id", "opportunities", "opportunity_id"),
-    ("activities", "opportunity_id", "opportunities", "opportunity_id"),
-)
+FOREIGN_KEYS = (("closed_deals", "mql_id", "mqls", "mql_id"),)
 
-# Columns that may legitimately be NULL. Every other column is required.
-NULLABLE_COLUMNS = {("stage_history", "exited_date")}
+# Columns that must never be NULL. The real export leaves the rest blank for many rows
+# (most self-declared seller attributes are empty), so everything else is nullable.
+REQUIRED_COLUMNS = {
+    ("mqls", "mql_id"), ("mqls", "first_contact_date"), ("mqls", "landing_page_id"),
+    ("closed_deals", "mql_id"), ("closed_deals", "seller_id"), ("closed_deals", "sdr_id"),
+    ("closed_deals", "sr_id"), ("closed_deals", "won_date"),
+}
 
 
 class LoaderError(Exception):
@@ -177,7 +124,7 @@ def check_header(path: Path, contract: TableContract) -> None:
     """Fail fast if the file is missing or its header doesn't match the contract exactly."""
     if not path.is_file():
         raise SchemaError(
-            f"Missing {path}. Run `python pipelines/generate_data.py` first to create the raw CSVs."
+            f"Missing {path}. Run `python pipelines/fetch_data.py` to download the raw CSVs."
         )
     with path.open(newline="", encoding="utf-8") as fh:
         header = next(csv.reader(fh), None)
@@ -228,7 +175,7 @@ def validation_queries() -> list[tuple[str, str]]:
              f"SELECT COUNT(*) - COUNT(DISTINCT {c.primary_key}) FROM {t}")
         )
         for col in c.columns:
-            if (c.table, col) not in NULLABLE_COLUMNS:
+            if (c.table, col) in REQUIRED_COLUMNS:
                 checks.append((f"{t}.{col} has NULLs", f"SELECT COUNT(*) FROM {t} WHERE {col} IS NULL"))
 
     for child, child_col, parent, parent_col in FOREIGN_KEYS:
@@ -238,30 +185,18 @@ def validation_queries() -> list[tuple[str, str]]:
              f"WHERE NOT EXISTS (SELECT 1 FROM {RAW_SCHEMA}.{parent} p WHERE p.{parent_col} = c.{child_col})")
         )
 
-    stage_list = ", ".join(_sql_string(s) for s in VALID_STAGES)
-    for table in ("opportunities", "stage_history"):
-        checks.append(
-            (f"{RAW_SCHEMA}.{table}.stage outside {list(VALID_STAGES)}",
-             f"SELECT COUNT(*) FROM {RAW_SCHEMA}.{table} WHERE stage NOT IN ({stage_list})")
-        )
-
-    o = f"{RAW_SCHEMA}.opportunities"
-    sh = f"{RAW_SCHEMA}.stage_history"
+    m = f"{RAW_SCHEMA}.mqls"
+    d = f"{RAW_SCHEMA}.closed_deals"
+    origin_list = ", ".join(_sql_string(o) for o in VALID_ORIGINS)
     checks += [
-        ("opportunities.amount must be > 0", f"SELECT COUNT(*) FROM {o} WHERE amount <= 0"),
-        ("opportunities.probability must be between 0 and 1",
-         f"SELECT COUNT(*) FROM {o} WHERE probability NOT BETWEEN 0 AND 1"),
-        ("opportunities.close_date before created_date",
-         f"SELECT COUNT(*) FROM {o} WHERE close_date < created_date"),
-        ("opportunities.stage_entered_date before created_date",
-         f"SELECT COUNT(*) FROM {o} WHERE stage_entered_date < created_date"),
-        ("stage_history.exited_date before entered_date",
-         f"SELECT COUNT(*) FROM {sh} WHERE exited_date < entered_date"),
-        # Every opportunity's current stage must match its latest stage_history row.
-        ("opportunities.stage disagrees with the latest stage_history row",
-         f"SELECT COUNT(*) FROM {o} JOIN ("
-         f"  SELECT opportunity_id, arg_max(stage, stage_sequence) AS last_stage FROM {sh} GROUP BY 1"
-         f") h USING (opportunity_id) WHERE h.last_stage <> {o}.stage"),
+        (f"mqls.origin outside {list(VALID_ORIGINS)}",
+         f"SELECT COUNT(*) FROM {m} WHERE origin IS NOT NULL AND origin NOT IN ({origin_list})"),
+        ("closed_deals.seller_id is not unique (one seller per won lead)",
+         f"SELECT COUNT(*) - COUNT(DISTINCT seller_id) FROM {d}"),
+        ("closed_deals.declared_monthly_revenue is negative",
+         f"SELECT COUNT(*) FROM {d} WHERE declared_monthly_revenue < 0"),
+        ("closed_deals.declared_product_catalog_size is negative",
+         f"SELECT COUNT(*) FROM {d} WHERE declared_product_catalog_size < 0"),
     ]
     return checks
 
@@ -330,7 +265,7 @@ def load(raw_dir: Path = DEFAULT_RAW_DIR, db_path: Path = DEFAULT_DB_PATH) -> di
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Load raw CRM CSVs into DuckDB.")
+    parser = argparse.ArgumentParser(description="Load the raw Olist funnel CSVs into DuckDB.")
     parser.add_argument("--raw-dir", type=Path, default=DEFAULT_RAW_DIR)
     parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH)
     args = parser.parse_args(argv)
@@ -343,7 +278,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Loaded {len(counts)} tables into {args.db} (schema '{RAW_SCHEMA}'), all checks passed:")
     for table, n in counts.items():
-        print(f"  {RAW_SCHEMA}.{table:<16} {n:>7,} rows")
+        print(f"  {RAW_SCHEMA}.{table:<14} {n:>7,} rows")
     return 0
 
 

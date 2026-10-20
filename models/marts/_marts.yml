@@ -1,183 +1,125 @@
 version: 2
 
 models:
-  - name: dim_accounts
-    description: Account dimension. One row per account.
+  - name: fct_lead_funnel
+    description: One row per marketing-qualified lead, joined to its deal if it closed.
     columns:
-      - name: account_id
+      - name: mql_id
         data_tests: [unique, not_null]
+      - name: is_won
+        data_tests: [not_null]
+      - name: days_to_close
+        description: First contact to close, in days. NULL for open/lost leads and the one deal dated before its first contact.
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+      - name: sdr_id
+        description: Only populated for won leads; the export doesn't say who worked lost leads.
 
-  - name: dim_reps
-    description: Rep dimension. One row per sales rep.
+  - name: agg_lead_source_conversion
+    description: Conversion by lead source with 95% Wilson intervals.
     columns:
-      - name: rep_id
+      - name: lead_source
         data_tests: [unique, not_null]
+      - name: conversion_rate
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: conversion_rate_ci_low
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: conversion_rate_ci_high
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: share_of_mqls
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+
+  - name: agg_cohort_conversion
+    description: Conversion by first-contact month, overall and within fixed windows.
+    columns:
+      - name: cohort_month
+        data_tests: [unique, not_null]
+      - name: conversion_rate_to_date
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: conversion_rate_90d
+        description: NULL until every lead in the cohort is at least 90 days old.
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+
+  - name: agg_segment_summary
+    description: Won deals by the seller's business segment.
+    columns:
+      - name: business_segment
+        data_tests: [unique, not_null]
+      - name: share_of_deals
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+
+  - name: dim_sdrs
+    description: One row per SDR, from won deals only (volume and speed, not conversion).
+    columns:
+      - name: sdr_id
+        data_tests: [unique, not_null]
+      - name: sdr_label
+        data_tests: [unique, not_null]
+      - name: share_closed_within_30_days
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+
+  - name: dim_sales_reps
+    description: One row per sales rep (closer), from won deals only.
+    columns:
+      - name: sr_id
+        data_tests: [unique, not_null]
+      - name: sales_rep_label
+        data_tests: [unique, not_null]
+      - name: share_closed_within_30_days
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+
+  - name: agg_landing_page_conversion
+    description: Conversion per landing page with at least vars.min_landing_page_mqls leads.
+    columns:
+      - name: landing_page_id
+        data_tests: [unique, not_null]
+      - name: conversion_rate
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
 
   - name: dim_date
-    description: Calendar dimension. One row per day.
+    description: Calendar from the first lead to the as-of date.
     columns:
       - name: date_day
         data_tests: [unique, not_null]
-
-  - name: fct_activities
-    description: One row per logged sales activity, with owning rep and account.
-    columns:
-      - name: activity_id
-        data_tests: [unique, not_null]
-      - name: rep_id
-        data_tests:
-          - relationships:
-              arguments:
-                to: ref('dim_reps')
-                field: rep_id
-
-  - name: fct_stage_history
-    description: >
-      One row per opportunity per stage entered, with days in stage and the outcome
-      (advanced / lost / open). Source for stage-duration and conversion metrics.
-    columns:
-      - name: stage_history_key
-        data_tests: [unique, not_null]
-      - name: stage_outcome
-        data_tests:
-          - accepted_values:
-              arguments:
-                values: ['advanced', 'lost', 'open']
-      - name: days_in_stage
-        data_tests:
-          - accepted_range:
-              arguments:
-                min_value: 0
-
-  - name: fct_pipeline_velocity
-    description: >
-      One row per opportunity. Core fact for pipeline velocity, stalled-deal risk and
-      the weighted (expected revenue) forecast. All "as of" figures use var('as_of_date').
-    columns:
-      - name: opportunity_id
-        data_tests: [unique, not_null]
-      - name: account_id
-        data_tests:
-          - relationships:
-              arguments:
-                to: ref('dim_accounts')
-                field: account_id
-      - name: rep_id
-        data_tests:
-          - relationships:
-              arguments:
-                to: ref('dim_reps')
-                field: rep_id
-      - name: created_date
-        data_tests:
-          - relationships:
-              arguments:
-                to: ref('dim_date')
-                field: date_day
-      - name: close_date
-        data_tests:
-          - relationships:
-              arguments:
-                to: ref('dim_date')
-                field: date_day
-      - name: weighted_amount
-        description: amount * stage_probability while open (expected revenue); 0 once closed.
-        data_tests:
-          - not_null
-          - accepted_range:
-              arguments:
-                min_value: 0
-      - name: historical_weighted_amount
-        description: amount * historical win rate from the deal's current stage and tier, while open; 0 once closed.
-        data_tests:
-          - not_null
-          - accepted_range:
-              arguments:
-                min_value: 0
-      - name: historical_win_probability
-        data_tests:
-          - accepted_range:
-              arguments:
-                min_value: 0
-                max_value: 1
-      - name: sales_cycle_days
-        description: Days from created to close, for closed deals only.
-        data_tests:
-          - accepted_range:
-              arguments:
-                min_value: 0
-      - name: is_stalled
-        description: Open, in Negotiation, for more than var('stalled_days_threshold') (45) days.
-        data_tests: [not_null]
-      - name: furthest_stage_order
-        data_tests:
-          - not_null
-          - accepted_range:
-              arguments:
-                min_value: 1
-                max_value: 4
-
-  - name: agg_stage_conversion
-    description: >
-      Stage-to-stage conversion and stage duration by account tier, plus an 'All'
-      rollup. conversion_rate = advanced / (advanced + lost), counting resolved
-      stage visits only.
-    data_tests:
-      - unique:
-          arguments:
-            column_name: "account_tier || '|' || stage_name"
-    columns:
-      - name: account_tier
-        data_tests:
-          - accepted_values:
-              arguments:
-                values: ['SMB', 'Mid-Market', 'Enterprise', 'All']
-      - name: conversion_rate
-        data_tests:
-          - not_null
-          - accepted_range:
-              arguments:
-                min_value: 0
-                max_value: 1
-      - name: historical_win_rate_from_stage
-        description: Product of conversion rates from this stage through Closed-Won.
-        data_tests:
-          - not_null
-          - accepted_range:
-              arguments:
-                min_value: 0
-                max_value: 1
-      - name: pct_of_created_reaching_stage
-        data_tests:
-          - accepted_range:
-              arguments:
-                min_value: 0
-                max_value: 1
-
-  - name: dim_sales_performance
-    description: >
-      One row per rep: open and weighted pipeline, current-quarter forecast gap to quota,
-      stalled deals, TTM bookings, win rate and sales cycle.
-    columns:
-      - name: rep_id
-        data_tests: [unique, not_null]
-      - name: expected_revenue_gap
-        description: >
-          quarterly_quota - (won_qtd + forecast_weighted_pipeline). Positive means a projected
-          shortfall for the current quarter.
-        data_tests: [not_null]
-      - name: expected_revenue_gap_historical
-        description: Same as expected_revenue_gap, but weighting open deals by historical win rates.
-        data_tests: [not_null]
-      - name: won_qtd
-        data_tests:
-          - not_null
-          - accepted_range:
-              arguments:
-                min_value: 0
-      - name: win_rate_ttm
-        data_tests:
-          - accepted_range:
-              arguments:
-                min_value: 0
-                max_value: 1

@@ -1,5 +1,6 @@
 # Builds the warehouse from scratch and runs the test suite on every push and PR.
-# The data is synthetic and seeded, so CI needs no secrets or committed CSVs.
+# The data is Olist's real marketing funnel, committed under data/raw and hash-checked,
+# so CI needs no secrets and no Kaggle download.
 # The live-Ollama agent test skips itself (RUN_OLLAMA_TESTS is not set here).
 name: CI
 
@@ -35,8 +36,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Generate synthetic data (seed 42)
-        run: python pipelines/generate_data.py
+      - name: Verify the committed Olist CSVs (SHA-256, no download)
+        run: python pipelines/fetch_data.py --verify
 
       - name: Load into DuckDB (with integrity checks)
         run: python pipelines/load_to_duckdb.py

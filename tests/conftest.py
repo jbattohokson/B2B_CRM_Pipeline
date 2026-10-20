@@ -1,68 +1,47 @@
-"""Shared fixtures: one small generated dataset, reused by the generator and loader tests."""
+"""Shared fixtures: the real Olist funnel CSVs, loaded and modeled into a temp warehouse.
 
-from datetime import date
+The full dataset is small (875 KB), so tests run on all of it rather than a
+sample. That also lets tests pin real headline numbers.
+"""
+
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
-from pipelines.generate_data import GeneratorConfig, generate, write_csvs
-
-# Small enough to run in about a second, big enough to produce open, stalled, won and lost deals.
-SMALL_CONFIG = GeneratorConfig(
-    seed=123, n_accounts=150, n_reps=12, n_opportunities=1500,
-    # Mid-quarter as-of, like the real config: there's both QTD bookings and in-quarter pipeline.
-    start_date=date(2025, 1, 1), as_of=date(2026, 5, 15),
-)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+REAL_RAW_DIR = PROJECT_ROOT / "data" / "raw"
 
 
 @pytest.fixture(scope="session")
-def small_config() -> GeneratorConfig:
-    return SMALL_CONFIG
-
-
-@pytest.fixture(scope="session")
-def tables(small_config):
-    """In-memory tables from one generation run (read-only: don't mutate in tests)."""
-    return generate(small_config)
-
-
-@pytest.fixture(scope="session")
-def raw_dir(tables, tmp_path_factory):
-    """The small dataset written to CSVs in a session temp dir."""
+def raw_dir(tmp_path_factory):
+    """A session copy of the committed real CSVs (read-only: copy again before editing)."""
     out = tmp_path_factory.mktemp("raw")
-    write_csvs(tables, out)
+    for csv in REAL_RAW_DIR.glob("*.csv"):
+        shutil.copy(csv, out / csv.name)
     return out
 
 
 @pytest.fixture(scope="session")
-def marts_db(raw_dir, small_config, tmp_path_factory):
-    """A full warehouse (raw + staging + marts) built from the small dataset by the real loader and dbt.
+def marts_db(raw_dir, tmp_path_factory):
+    """A full warehouse (raw + staging + marts) built by the real loader and `dbt build`.
 
-    Runs `dbt build` (models and dbt tests) into a temp DuckDB file, with the
-    as-of var matched to the small config. That also proves the models and dbt
-    tests hold on a second, differently seeded dataset.
+    dbt build also runs every dbt test, so a failing reconciliation check fails the fixture.
     """
-    import os
-    import subprocess
-    import sys
-    from pathlib import Path
-
     from pipelines.load_to_duckdb import load
 
     work = tmp_path_factory.mktemp("warehouse")
     db_path = work / "test_crm.duckdb"
     load(raw_dir, db_path)
 
-    project_root = Path(__file__).resolve().parent.parent
     dbt = Path(sys.executable).parent / "dbt"
-    env = {**os.environ, "DBT_DB_PATH": str(db_path), "DBT_PROFILES_DIR": str(project_root)}
+    env = {**os.environ, "DBT_DB_PATH": str(db_path), "DBT_PROFILES_DIR": str(PROJECT_ROOT)}
     proc = subprocess.run(
-        [
-            str(dbt), "build", "--quiet",
-            "--vars", f"{{as_of_date: '{small_config.as_of.isoformat()}'}}",
-            "--target-path", str(work / "target"),
-            "--log-path", str(work / "logs"),
-        ],
-        cwd=project_root, env=env, capture_output=True, text=True, timeout=300,
+        [str(dbt), "build", "--quiet", "--target-path", str(work / "target"), "--log-path", str(work / "logs")],
+        cwd=PROJECT_ROOT, env=env, capture_output=True, text=True, timeout=300,
     )
     assert proc.returncode == 0, f"dbt build failed:\n{proc.stdout}\n{proc.stderr}"
     return db_path

@@ -1,4 +1,4 @@
-"""Build the schema briefing the RevOps agent carries in its backstory.
+"""Build the schema briefing the funnel analyst agent carries in its backstory.
 
 Small local models guess table and column names when they aren't told them.
 This module puts the real mart schema into the prompt:
@@ -7,8 +7,7 @@ This module puts the real mart schema into the prompt:
   drift from what dbt actually built.
 - Each table gets a one-line purpose, and key metrics get their business
   definitions (METRIC_GLOSSARY). A test checks that every glossary column exists.
-- The as-of date and stall threshold come from dbt_project.yml vars, the same
-  values the models use.
+- The as-of date comes from dbt_project.yml vars, the same value the models use.
 
 The output stays compact on purpose (about 1.3k tokens). Ollama's default
 context window is 4,096 tokens, and CrewAI's own scaffolding plus query results
@@ -29,46 +28,39 @@ MARTS_SCHEMA = "marts"
 
 # Tables the agent should use, in the order it should consider them, each with its grain.
 MART_TABLES: dict[str, str] = {
-    "fct_pipeline_velocity": "one row per opportunity (deal); start here for deal-level questions",
-    "dim_sales_performance": "one row per sales rep; pipeline, current-quarter forecast, TTM results",
-    "agg_stage_conversion": "one row per account_tier x funnel stage, plus account_tier='All' rollup",
-    "fct_stage_history": "one row per opportunity per stage entered",
-    "fct_activities": "one row per sales activity (call, email, meeting, demo, proposal)",
-    "dim_accounts": "one row per account",
-    "dim_reps": "one row per sales rep (attributes only)",
+    "fct_lead_funnel": "one row per marketing-qualified lead (MQL), won or not; start here for lead-level questions",
+    "agg_lead_source_conversion": "one row per lead_source: MQLs, deals won, conversion rate with 95% interval",
+    "agg_cohort_conversion": "one row per cohort_month (month of first contact): conversion overall and within 30/60/90/180 days",
+    "dim_sdrs": "one row per SDR (won deals only): volume and speed",
+    "dim_sales_reps": "one row per sales rep / closer (won deals only): volume and speed",
+    "agg_segment_summary": "one row per seller business_segment (won deals only)",
+    "agg_landing_page_conversion": "one row per landing page with 30+ MQLs",
     "dim_date": "calendar, one row per day",
 }
 
 # Tables described in one line rather than by listing every column.
 SUMMARIZED_TABLES: dict[str, str] = {
-    "dim_date": "key columns date_day, year, quarter, quarter_label (e.g. '2026-Q3'), month, first_day_of_quarter",
+    "dim_date": "key columns date_day, year, quarter, quarter_label (e.g. '2018-Q1'), month, first_day_of_month",
 }
 
 # (table, column) -> business definition. Only metrics whose meaning isn't obvious from the name.
 METRIC_GLOSSARY: dict[tuple[str, str], str] = {
-    ("fct_pipeline_velocity", "weighted_amount"): "amount * stage_probability (CRM default 10/20/40/70%) for open deals; 0 when closed",
-    ("fct_pipeline_velocity", "historical_weighted_amount"): "amount * historical win rate from the deal's stage+tier; 0 when closed",
-    ("fct_pipeline_velocity", "is_stalled"): "open AND stage_name='Negotiation' AND days_in_current_stage > stall threshold",
-    ("fct_pipeline_velocity", "sales_cycle_days"): "created_date to close_date, closed deals only (NULL while open)",
-    ("fct_pipeline_velocity", "close_date"): "actual close date if closed; rep's expected close date if open",
-    ("fct_pipeline_velocity", "is_closing_this_quarter"): "open with expected close in the current quarter",
-    ("fct_pipeline_velocity", "is_won_this_quarter"): "won between quarter start and the as-of date (QTD)",
-    ("fct_pipeline_velocity", "days_since_last_activity"): "days from last logged activity to as-of date (open deals)",
-    ("dim_sales_performance", "won_qtd"): "Closed-Won amount quarter-to-date",
-    ("dim_sales_performance", "forecast_weighted_pipeline"): "sum of weighted_amount for deals closing this quarter",
-    ("dim_sales_performance", "expected_revenue_gap"): "quarterly_quota - (won_qtd + forecast_weighted_pipeline); positive = shortfall",
-    ("dim_sales_performance", "expected_revenue_gap_historical"): "same gap using historical win rates instead of CRM probabilities",
-    ("dim_sales_performance", "projected_attainment"): "(won_qtd + forecast_weighted_pipeline) / quarterly_quota",
-    ("dim_sales_performance", "forecast_pipeline_coverage"): "unweighted pipeline closing this quarter / remaining_quota",
-    ("dim_sales_performance", "win_rate_ttm"): "won deals / closed deals, trailing 365 days (count-based)",
-    ("dim_sales_performance", "quota_attainment_ttm"): "won_amount_ttm / annual_quota",
-    ("agg_stage_conversion", "conversion_rate"): "advanced / (advanced + lost) for deals that left the stage",
-    ("agg_stage_conversion", "historical_win_rate_from_stage"): "probability a deal in this stage eventually wins",
-    ("agg_stage_conversion", "pct_of_created_reaching_stage"): "funnel: deals entering this stage / deals entering Prospecting",
+    ("fct_lead_funnel", "is_won"): "the lead signed as a seller (closed-won); FALSE means lost or never closed",
+    ("fct_lead_funnel", "days_to_close"): "first_contact_date to won_date in days; NULL if not won (and for 1 deal dated before first contact)",
+    ("fct_lead_funnel", "won_within_90_days"): "won and closed within 90 days of first contact (also _30/_60/_180)",
+    ("fct_lead_funnel", "window_90_complete"): "lead is at least 90 days old at the as-of date, so the 90-day flag is final",
+    ("fct_lead_funnel", "sdr_id"): "SDR on the deal; NULL for leads that didn't close (the data only names reps on won deals)",
+    ("agg_lead_source_conversion", "conversion_rate"): "deals_won / mqls for that lead source",
+    ("agg_lead_source_conversion", "conversion_index"): "source conversion rate / overall conversion rate (1.0 = average)",
+    ("agg_lead_source_conversion", "conversion_rate_ci_low"): "lower bound of the 95% Wilson interval (ci_high is the upper)",
+    ("agg_cohort_conversion", "conversion_rate_90d"): "share of the cohort won within 90 days; NULL until the whole cohort is 90+ days old",
+    ("dim_sdrs", "sdr_label"): "readable name like 'SDR 14' (IDs are anonymized hashes)",
+    ("dim_sdrs", "share_closed_within_30_days"): "share of the SDR's won deals that closed within 30 days of first contact",
+    ("dim_sales_reps", "sales_rep_label"): "readable name like 'Rep 07'",
 }
 
 def load_dbt_vars(project_file: Path = PROJECT_ROOT / "dbt_project.yml") -> dict:
-    """The vars block from dbt_project.yml (as_of_date, stalled_days_threshold)."""
+    """The vars block from dbt_project.yml (as_of_date, min_landing_page_mqls)."""
     with project_file.open(encoding="utf-8") as fh:
         return yaml.safe_load(fh).get("vars", {})
 
@@ -112,16 +104,14 @@ def build_schema_context(db_path: Path | str | None = None) -> str:
 
     lines.append(
         "\nCONVENTIONS:\n"
-        f"- 'Today' (as-of date) is {dbt_vars['as_of_date']}; the current quarter is the one containing it.\n"
-        f"- Stall threshold: {dbt_vars['stalled_days_threshold']} days in Negotiation.\n"
-        "- stage_name values: 'Prospecting','Discovery','Demo','Negotiation','Closed-Won','Closed-Lost'.\n"
-        "- account_tier / rep_segment values: 'SMB','Mid-Market','Enterprise'. "
-        "Regions: 'NA-East','NA-West','EMEA','APAC'.\n"
-        "- 'Pipeline' or deal value means amount (unweighted). Use weighted_amount only for "
-        "expected/weighted/forecast revenue.\n"
-        "- Money columns are USD. Rates (win_rate, conversion_rate, probability) are 0-1 decimals.\n"
-        "- Qualify columns as alias.column (FROM marts.fct_pipeline_velocity f ... f.rep_name), "
-        "never alias.table.column.\n"
-        "- Rep names live in fct_pipeline_velocity.rep_name and dim_sales_performance.rep_name; no join needed."
+        f"- 'Today' (as-of date) is {dbt_vars['as_of_date']}. Leads arrived 2017-06 to 2018-05.\n"
+        "- Real anonymized data from Olist's seller-acquisition funnel. There are no deal amounts, stages or quotas.\n"
+        "- Conversion = won leads / all leads. Per-SDR or per-rep conversion rates can't be computed: "
+        "reps are only recorded on won deals.\n"
+        "- lead_source values: 'organic_search','paid_search','social','unknown','direct_traffic','email',"
+        "'referral','other','display','other_publicities'.\n"
+        "- Use sdr_label / sales_rep_label (from dim_sdrs / dim_sales_reps) when naming reps; join on sdr_id / sr_id.\n"
+        "- Rates are 0-1 decimals. Use median for days_to_close (it is heavily skewed).\n"
+        "- Qualify columns as alias.column (FROM marts.fct_lead_funnel f ... f.lead_source), never alias.table.column."
     )
     return "\n".join(lines)

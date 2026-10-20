@@ -12,6 +12,7 @@ fixture-built warehouse.
 
 from __future__ import annotations
 
+import math
 import os
 from datetime import date
 from pathlib import Path
@@ -21,9 +22,12 @@ import pandas as pd
 from agent.schema_context import load_dbt_vars
 from agent.sql_tool import PROJECT_ROOT, open_read_only
 
-REQUIRED_MARTS = ("fct_pipeline_velocity", "dim_sales_performance", "agg_stage_conversion")
-TIER_ORDER = ["SMB", "Mid-Market", "Enterprise"]
-STAGE_ORDER = ["Prospecting", "Discovery", "Demo", "Negotiation"]
+REQUIRED_MARTS = ("fct_lead_funnel", "agg_lead_source_conversion", "agg_cohort_conversion", "dim_sdrs",
+                  "dim_sales_reps", "agg_segment_summary")
+
+# Leads from before 2018 were mostly closed months later, once the sales team started working
+# them (see the README). "2018" restricts every view to leads that arrived after that ramp.
+PERIODS = {"All leads": None, "2018 leads": date(2018, 1, 1)}
 
 
 def default_db_path() -> Path:
@@ -51,16 +55,22 @@ def as_of_date() -> date:
     return date.fromisoformat(str(load_dbt_vars()["as_of_date"]))
 
 
-def current_quarter_bounds(as_of: date) -> tuple[date, date]:
-    """(first day, first day of next quarter) for the quarter containing as_of."""
-    q_start_month = 3 * ((as_of.month - 1) // 3) + 1
-    start = date(as_of.year, q_start_month, 1)
-    end = date(as_of.year + (q_start_month == 10), 1 if q_start_month == 10 else q_start_month + 3, 1)
-    return start, end
+def wilson_interval(successes: float, trials: float, z: float = 1.96) -> tuple[float, float]:
+    """95% Wilson score interval for a proportion. Same formula as the dbt wilson_bound macro."""
+    if trials <= 0:
+        return (0.0, 0.0)
+    p = successes / trials
+    centre = p + z * z / (2 * trials)
+    spread = z * math.sqrt(p * (1 - p) / trials + z * z / (4 * trials * trials))
+    denom = 1 + z * z / trials
+    return ((centre - spread) / denom, (centre + spread) / denom)
 
 
-def quarter_label(as_of: date) -> str:
-    return f"{as_of.year}-Q{(as_of.month - 1) // 3 + 1}"
+def _period_filter(period: str | None) -> tuple[str, list]:
+    start = PERIODS.get(period or "All leads")
+    if start is None:
+        return "", []
+    return "WHERE first_contact_date >= ?", [start]
 
 
 # ---------------------------------------------------------------------------
@@ -68,122 +78,93 @@ def quarter_label(as_of: date) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _segment_filter(column: str, segment: str | None) -> tuple[str, list]:
-    if segment and segment != "All":
-        return f"WHERE {column} = ?", [segment]
-    return "", []
-
-
-def load_kpis(db_path: Path | str, segment: str | None = None) -> dict:
-    """Headline numbers for the KPI row, optionally for one rep segment."""
-    where, params = _segment_filter("rep_segment", segment)
+def load_kpis(db_path: Path | str, period: str | None = None) -> dict:
+    """Headline numbers for the KPI row."""
+    where, params = _period_filter(period)
     row = query(
         db_path,
         f"""
         SELECT
-            sum(open_deal_count) AS open_deals,
-            sum(open_pipeline_amount) AS open_pipeline,
-            sum(won_qtd) AS won_qtd,
-            sum(quarterly_quota) AS quarterly_quota,
-            sum(projected_bookings) AS projected_crm,
-            sum(projected_bookings_historical) AS projected_historical,
-            sum(stalled_deal_count) AS stalled_deals,
-            sum(stalled_pipeline_amount) AS stalled_pipeline,
-            count(*) FILTER (WHERE expected_revenue_gap > 0) AS reps_short,
-            count(*) AS reps
-        FROM marts.dim_sales_performance {where}
+            count(*) AS mqls,
+            count(*) FILTER (WHERE is_won) AS deals_won,
+            median(days_to_close) AS median_days_to_close,
+            count(*) FILTER (WHERE won_within_30_days) AS won_within_30_days,
+            count(DISTINCT sdr_id) AS active_sdrs,
+            count(DISTINCT sr_id) AS active_reps
+        FROM marts.fct_lead_funnel {where}
         """,
         params,
     ).iloc[0]
-    kpis = {k: (float(v) if v is not None else 0.0) for k, v in row.items()}
-    quota = kpis["quarterly_quota"] or 1.0
-    kpis["attainment_crm"] = kpis["projected_crm"] / quota
-    kpis["attainment_historical"] = kpis["projected_historical"] / quota
+    kpis = {k: (float(v) if v is not None and not pd.isna(v) else 0.0) for k, v in row.items()}
+    kpis["conversion_rate"] = kpis["deals_won"] / kpis["mqls"] if kpis["mqls"] else 0.0
+    kpis["share_won_within_30_days"] = kpis["won_within_30_days"] / kpis["deals_won"] if kpis["deals_won"] else 0.0
     return kpis
 
 
-def load_funnel(db_path: Path | str, segment: str | None = None) -> pd.DataFrame:
-    """Stage conversion by tier (excluding the 'All' rollup), in funnel order."""
-    where, params = _segment_filter("account_tier", segment)
-    where = where or "WHERE account_tier <> 'All'"
+def load_source_conversion(db_path: Path | str, period: str | None = None) -> pd.DataFrame:
+    """MQLs, deals and conversion (with 95% Wilson interval) per lead source, best first."""
+    where, params = _period_filter(period)
     df = query(
         db_path,
         f"""
-        SELECT account_tier, stage_name, stage_order, deals_entered, conversion_rate,
-               pct_of_created_reaching_stage, avg_days_in_stage, median_days_in_stage,
-               historical_win_rate_from_stage
-        FROM marts.agg_stage_conversion {where}
-        ORDER BY stage_order
+        SELECT lead_source, count(*) AS mqls, count(*) FILTER (WHERE is_won) AS deals_won,
+               median(days_to_close) AS median_days_to_close
+        FROM marts.fct_lead_funnel {where}
+        GROUP BY lead_source
         """,
         params,
     )
-    df["account_tier"] = pd.Categorical(df["account_tier"], TIER_ORDER, ordered=True)
-    return df.sort_values(["account_tier", "stage_order"]).reset_index(drop=True)
+    df["conversion_rate"] = df["deals_won"] / df["mqls"]
+    bounds = [wilson_interval(w, n) for w, n in zip(df["deals_won"], df["mqls"])]
+    df["ci_low"] = [b[0] for b in bounds]
+    df["ci_high"] = [b[1] for b in bounds]
+    df["share_of_mqls"] = df["mqls"] / df["mqls"].sum()
+    return df.sort_values("conversion_rate", ascending=False).reset_index(drop=True)
 
 
-def load_rep_performance(db_path: Path | str, segment: str | None = None) -> pd.DataFrame:
-    where, params = _segment_filter("rep_segment", segment)
-    return query(
-        db_path,
-        f"""
-        SELECT rep_id, rep_name, rep_segment, rep_region, quarterly_quota, won_qtd,
-               forecast_weighted_pipeline, forecast_weighted_pipeline_historical,
-               expected_revenue_gap, expected_revenue_gap_historical, projected_attainment,
-               stalled_deal_count, stalled_pipeline_amount, open_deal_count, open_pipeline_amount,
-               win_rate_ttm, quota_attainment_ttm, avg_sales_cycle_days_won
-        FROM marts.dim_sales_performance {where}
-        ORDER BY rep_name
-        """,
-        params,
-    )
-
-
-def load_stalled_deals(db_path: Path | str, segment: str | None = None) -> pd.DataFrame:
-    where, params = _segment_filter("a.account_tier", segment)
-    where = (where + " AND" if where else "WHERE") + " f.is_stalled"
-    return query(
-        db_path,
-        f"""
-        SELECT f.opportunity_id, f.company_name, f.account_tier, f.rep_name, f.amount,
-               f.days_in_current_stage, f.days_since_last_activity, f.close_date
-        FROM marts.fct_pipeline_velocity f
-        JOIN marts.dim_accounts a USING (account_id)
-        {where}
-        ORDER BY f.days_in_current_stage DESC
-        """,
-        params,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Simulator inputs
-# ---------------------------------------------------------------------------
-
-
-def load_open_deals(db_path: Path | str) -> pd.DataFrame:
-    """Every open deal with what the simulator needs to re-weight and re-time it."""
+def load_cohorts(db_path: Path | str) -> pd.DataFrame:
     return query(
         db_path,
         """
-        SELECT f.opportunity_id, f.rep_id, r.rep_segment, f.account_tier, f.stage_name,
-               f.amount::DOUBLE AS amount,
-               f.stage_probability::DOUBLE AS crm_probability,
-               f.historical_win_probability AS historical_probability,
-               f.close_date, f.is_stalled
-        FROM marts.fct_pipeline_velocity f
-        JOIN marts.dim_reps r USING (rep_id)
-        WHERE f.is_open
+        SELECT cohort_month, mqls, deals_won, conversion_rate_to_date, conversion_rate_30d,
+               conversion_rate_90d, conversion_rate_180d, median_days_to_close
+        FROM marts.agg_cohort_conversion
+        ORDER BY cohort_month
         """,
     )
 
 
-def load_segment_targets(db_path: Path | str) -> pd.DataFrame:
-    """Quarterly quota and won-QTD per rep segment."""
+def load_sdrs(db_path: Path | str) -> pd.DataFrame:
     return query(
         db_path,
         """
-        SELECT rep_segment, sum(quarterly_quota) AS quarterly_quota, sum(won_qtd)::DOUBLE AS won_qtd
-        FROM marts.dim_sales_performance
-        GROUP BY rep_segment
+        SELECT sdr_label AS label, deals_won, share_of_deals, median_days_to_close,
+               share_closed_within_30_days, deals_per_active_month, top_lead_source, top_business_segment
+        FROM marts.dim_sdrs
+        ORDER BY deals_won DESC, label
+        """,
+    )
+
+
+def load_reps(db_path: Path | str) -> pd.DataFrame:
+    return query(
+        db_path,
+        """
+        SELECT sales_rep_label AS label, deals_won, share_of_deals, median_days_to_close,
+               share_closed_within_30_days, deals_per_active_month, top_lead_source, top_business_segment
+        FROM marts.dim_sales_reps
+        ORDER BY deals_won DESC, label
+        """,
+    )
+
+
+def load_segments(db_path: Path | str) -> pd.DataFrame:
+    return query(
+        db_path,
+        """
+        SELECT business_segment, deals_won, share_of_deals, median_days_to_close,
+               deals_with_declared_revenue
+        FROM marts.agg_segment_summary
+        ORDER BY deals_won DESC
         """,
     )
