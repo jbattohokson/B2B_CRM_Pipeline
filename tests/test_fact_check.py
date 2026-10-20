@@ -89,3 +89,9 @@ def test_prompt_constants_are_allowed():
     answer = "* 45: stall threshold\n* 365: trailing days for TTM"
     assert find_unverified_figures(answer, [], allowed_values=(45, 365)) == []
     assert find_unverified_figures(answer, []) == ["45", "365"]
+
+
+def test_row_count_counts_as_verified():
+    """Real llama3.2 answer in the app: '21 reps have stuck deals' = the result's row count."""
+    result = pd.DataFrame({"rep_name": [f"Rep {i}" for i in range(21)], "max_stuck_days": range(100, 121)})
+    assert find_unverified_figures("21: the total number of reps with stuck deals", [result]) == []

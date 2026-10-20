@@ -53,8 +53,10 @@ def extract_figures(text: str) -> list[tuple[str, float, str | None]]:
 
 
 def _numeric_values(frames: Iterable[pd.DataFrame]) -> list[float]:
+    """Every numeric cell, plus each result's row count ("21 reps have stalled deals" = 21 rows)."""
     values = []
     for df in frames:
+        values.append(float(len(df)))
         for col in df.columns:
             for v in df[col].tolist():
                 try:
