@@ -84,7 +84,7 @@ def open_read_only(db_path: Path | str | None = None) -> duckdb.DuckDBPyConnecti
     path = Path(db_path) if db_path else DEFAULT_DB_PATH
     if not path.is_file():
         raise QueryExecutionError(
-            f"Database {path} not found. Build it first: generate_data.py, load_to_duckdb.py, then dbt build."
+            f"Database {path} not found. Build it first: pipelines/load_to_duckdb.py, then `DBT_PROFILES_DIR=. dbt build`."
         )
     try:
         return duckdb.connect(str(path), read_only=True, config={"enable_external_access": False})
