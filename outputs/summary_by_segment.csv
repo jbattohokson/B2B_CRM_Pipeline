@@ -10,8 +10,8 @@ pet,30,0.0356,14.5,1
 food_supplement,28,0.0333,19.5,0
 food_drink,26,0.0309,16.0,1
 sports_leisure,25,0.0297,8.0,0
-bed_bath_table,22,0.0261,19.5,1
 bags_backpacks,22,0.0261,9.0,0
+bed_bath_table,22,0.0261,19.5,1
 toys,20,0.0238,8.0,4
 fashion_accessories,19,0.0226,10.0,0
 home_office_furniture,14,0.0166,8.0,0
@@ -31,5 +31,5 @@ air_conditioning,3,0.0036,16.0,0
 other,3,0.0036,260.0,3
 games_consoles,2,0.0024,25.5,0
 perfume,2,0.0024,149.0,1
-unknown,1,0.0012,296.0,0
 religious,1,0.0012,4.0,0
+unknown,1,0.0012,296.0,0

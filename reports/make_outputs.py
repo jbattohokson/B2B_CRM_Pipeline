@@ -156,7 +156,7 @@ def reps(con) -> tuple[pd.DataFrame, pd.DataFrame]:
 def segments(con) -> pd.DataFrame:
     df = q(con, """SELECT business_segment, deals_won, share_of_deals, median_days_to_close,
                           deals_with_declared_revenue
-                   FROM marts.agg_segment_summary ORDER BY deals_won DESC""")
+                   FROM marts.agg_segment_summary ORDER BY deals_won DESC, business_segment""")
     top = df[df["business_segment"] != "unknown"].head(12).iloc[::-1]
     fig, ax = plt.subplots(figsize=(8, 4.8))
     ax.barh(top["business_segment"], top["deals_won"], color=ABOVE, height=0.62)
@@ -187,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
         tables["summary_by_closer.csv"] = closers
         tables["summary_by_segment.csv"] = segments(con)
         tables["summary_by_landing_page.csv"] = q(
-            con, "SELECT * FROM marts.agg_landing_page_conversion ORDER BY mqls DESC")
+            con, "SELECT * FROM marts.agg_landing_page_conversion ORDER BY mqls DESC, landing_page_id")
     finally:
         con.close()
     for name, df in tables.items():
