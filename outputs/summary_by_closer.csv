@@ -1,0 +1,23 @@
+label,deals_won,share_of_deals,median_days_to_close,share_closed_within_30_days,active_months,deals_per_active_month,top_lead_source,top_business_segment
+Rep 08,133,0.158,11.0,0.797,9,14.7778,organic_search,health_beauty
+Rep 20,82,0.0974,10.5,0.6463,10,8.2,organic_search,construction_tools_house_garden
+Rep 10,74,0.0879,11.5,0.7297,7,10.5714,organic_search,car_accessories
+Rep 12,64,0.076,10.0,0.6562,6,10.6667,organic_search,home_decor
+Rep 06,63,0.0748,16.5,0.6349,9,7.0,organic_search,health_beauty
+Rep 04,59,0.0701,16.0,0.6441,10,5.9,organic_search,home_decor
+Rep 22,59,0.0701,10.0,0.8644,6,9.8333,unknown,home_decor
+Rep 21,53,0.0629,15.0,0.6226,8,6.625,paid_search,car_accessories
+Rep 14,51,0.0606,17.0,0.6471,8,6.375,organic_search,home_decor
+Rep 19,36,0.0428,10.0,0.7778,4,9.0,organic_search,home_decor
+Rep 01,32,0.038,15.5,0.8125,4,8.0,organic_search,health_beauty
+Rep 02,27,0.0321,88.0,0.2593,5,5.4,paid_search,health_beauty
+Rep 17,26,0.0309,73.5,0.3077,6,4.3333,organic_search,construction_tools_house_garden
+Rep 09,24,0.0285,27.0,0.5417,5,4.8,organic_search,home_decor
+Rep 16,24,0.0285,6.0,0.9167,1,24.0,paid_search,home_decor
+Rep 05,10,0.0119,156.0,0.0,5,2.0,paid_search,car_accessories
+Rep 07,9,0.0107,132.0,0.0,4,2.25,organic_search,car_accessories
+Rep 13,7,0.0083,210.0,0.0,3,2.3333,organic_search,construction_tools_house_garden
+Rep 15,6,0.0071,181.5,0.0,3,2.0,organic_search,home_decor
+Rep 03,1,0.0012,306.0,0.0,1,1.0,organic_search,other
+Rep 11,1,0.0012,321.0,0.0,1,1.0,unknown,household_utilities
+Rep 18,1,0.0012,175.0,0.0,1,1.0,paid_search,food_supplement

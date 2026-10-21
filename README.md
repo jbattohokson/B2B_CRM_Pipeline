@@ -50,6 +50,19 @@ ollama pull llama3.2
 .venv/bin/streamlit run app/main.py                  # close it before re-running the loader or dbt
 ```
 
+## Portfolio outputs
+
+- **`B2B_Lead_Funnel_Analysis.html`**: the write-up, a single self-contained page (charts embedded) with findings, recommendations and data scope. `docs/B2B_Lead_Funnel_Analysis_Report.pdf` is the same page as a PDF.
+- `outputs/`: 7 charts (PNG) and 6 summary tables (CSV) by lead source, cohort, SDR, closer, segment and landing page, all written by `reports/make_outputs.py` straight from the marts (a test checks they reconcile to 8,000 MQLs and 842 deals).
+- `dashboard/`: screenshots of the three Streamlit tabs (PNG, plus one combined PDF).
+
+Rebuild them after `dbt build`:
+
+```bash
+.venv/bin/python reports/make_outputs.py
+CHROMIUM_PATH=/path/to/chrome .venv/bin/python reports/build_page.py --name B2B_Lead_Funnel_Analysis   # or `playwright install chromium` and drop CHROMIUM_PATH
+```
+
 ## Tools
 
 Python (pandas), DuckDB, dbt-duckdb, SQL, Streamlit, Plotly, CrewAI, Ollama (llama3.2), pytest, GitHub Actions.
@@ -65,10 +78,14 @@ Python (pandas), DuckDB, dbt-duckdb, SQL, Streamlit, Plotly, CrewAI, Ollama (lla
 
 ## Testing status (2026-10-20)
 
-- **pytest:** 124 passed, 1 skipped (the opt-in live-Ollama test). Covers the fetch/hash check (no network), the loader (every validation rule tripped on an edited copy of the real CSVs, rollback, schema drift, a locked file), the SQL guard (writes, stacked statements and `read_csv()` refused), schema context, the agent wiring and retry logic with a fake crew, the figure checker, data access checked against direct SQL, the simulator math, all charts in light and dark mode, and a Streamlit `AppTest` run of the whole app (headline tiles show 8,000 / 842 / 10.5%, and moving the conversion slider changes expected deals).
+- **pytest:** 125 passed, 1 skipped (the opt-in live-Ollama test). Covers the fetch/hash check (no network), the loader (every validation rule tripped on an edited copy of the real CSVs, rollback, schema drift, a locked file), the SQL guard (writes, stacked statements and `read_csv()` refused), schema context, the agent wiring and retry logic with a fake crew, the figure checker, data access checked against direct SQL, the simulator math, all charts in light and dark mode, and a Streamlit `AppTest` run of the whole app (headline tiles show 8,000 / 842 / 10.5%, and moving the conversion slider changes expected deals), plus a check that the portfolio charts and CSVs reconcile to the marts.
 - **dbt:** 62/62 pass on the real data.
 - **Repeat runs:** the full CI sequence (verify → load → `dbt build` → pytest) was run 3 times from a deleted database with identical results.
-- **Live agent:** the four `live_eval.py` questions were rewritten for the Olist schema but haven't been re-scored against a running Ollama model yet. The earlier synthetic-data eval (llama3.2: correct SQL and headline numbers 8/8, invented filler figures every run, caught by `fact_check.py`) is the reason the figure check exists.
+- **Live agent (llama3.2 3B, 2026-10-20):** the four `live_eval.py` questions, run once against the real warehouse (unedited log: `docs/live_eval_llama3.2_2026-10-20.txt`). 3 of 4 answers were grounded in a successful query, but only 2 were right.
+  - Q1 (best-converting source) and Q4 (median days by segment) were correct, though Q4 listed most values without their segment names.
+  - Q2 was wrong in a way the guardrails can't see: the model reported each source's *share of MQLs* as its *conversion rate*. Every number it quoted exists in the query result, so the fact checker passed it.
+  - Q3 wrote 12 queries against a column that doesn't exist in `dim_sdrs`, retried once, and then answered anyway with invented counts. The guardrails did catch this one: it was marked ungrounded and its 3 invented figures were flagged.
+  - Takeaway: the checks stop fabricated numbers, not misread columns. That's why the app always shows each query and its result table. 2 to 9 minutes per question on a 2-vCPU machine.
 
 **CI:** `.github/workflows/ci.yml` runs on every push and pull request: verify hashes → load → `dbt build` → `pytest -q`. It needs no secrets and no Ollama.
 

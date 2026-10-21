@@ -1,4 +1,4 @@
-# Requires Python 3.13 — dbt-duckdb's dependency chain doesn't yet have
+# Requires Python 3.13 because dbt-duckdb's dependency chain doesn't yet have
 # CPython 3.14 wheels (same constraint as ../MLB_Live_Agent/requirements.txt).
 # Install:  python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
@@ -17,6 +17,10 @@ plotly>=5.20.0
 crewai>=1.15.0
 pyyaml>=6.0       # reads dbt vars for the agent's schema context
 tabulate>=0.9.0   # pandas.to_markdown for query results shown to the model
+
+# Portfolio outputs (reports/make_outputs.py charts; reports/build_page.py prints the PDF)
+matplotlib>=3.8.0
+playwright>=1.40.0   # PDF only; set CHROMIUM_PATH or run `playwright install chromium`
 
 # Testing
 pytest>=8.0.0

@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>B2B Lead Funnel Analysis</title>
+<style>
+  :root{--ink:#0f1117;--ink-light:#4a4f5e;--border:#dde1ea;--bg:#f7f8fc;--white:#ffffff;--accent:#1a56db;--accent-dim:#e8eefb;--warn:#c0392b;--warn-dim:#fdf0ee;--green:#1a7f4b;--green-dim:#eaf5ef;--amber:#b45309;--amber-dim:#fef3e2;--mono:'Courier New',Courier,monospace}
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{font-family:'Georgia',serif;font-size:16px;line-height:1.7;color:var(--ink);background:var(--bg)}
+  a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+  .page-wrap{max-width:860px;margin:0 auto;padding:0 24px 80px}
+  header{background:#0f1117;color:var(--white);padding:56px 0 44px}
+  header .page-wrap{padding-top:0;padding-bottom:0}
+  .eyebrow{font-family:'Arial',sans-serif;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#8b93a8;margin-bottom:14px}
+  h1{font-size:clamp(24px,4vw,38px);font-weight:normal;line-height:1.2;letter-spacing:-.02em;margin-bottom:18px}
+  h1 em{font-style:italic;color:#8b93a8}
+  .meta{font-family:'Arial',sans-serif;font-size:13px;color:#8b93a8;display:flex;flex-wrap:wrap;gap:20px}
+  .meta span::before{content:'· '}
+  .sticky-nav{position:sticky;top:0;background:var(--white);border-bottom:1px solid var(--border);z-index:100;padding:10px 0}
+  .sticky-nav .page-wrap{display:flex;gap:24px;flex-wrap:wrap;padding-top:0;padding-bottom:0}
+  .sticky-nav a{font-family:'Arial',sans-serif;font-size:12.5px;color:var(--ink-light);font-weight:500}
+  .sticky-nav a:hover{color:var(--accent);text-decoration:none}
+  .exec-summary{background:var(--white);border:1px solid var(--border);border-left:4px solid var(--accent);padding:28px 32px;margin:40px 0 48px;border-radius:0 6px 6px 0}
+  .exec-summary h2{font-family:'Arial',sans-serif;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:14px}
+  .exec-summary p{font-size:15.5px;margin-bottom:10px}
+  .exec-summary p:last-child{margin-bottom:0}
+  .kpi-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:16px;margin-bottom:56px}
+  .kpi{background:var(--white);border:1px solid var(--border);border-radius:8px;padding:20px 18px;text-align:center}
+  .kpi .num{font-size:26px;font-weight:700;font-family:'Arial',sans-serif;letter-spacing:-.03em;line-height:1;margin-bottom:6px}
+  .kpi .num.warn{color:var(--warn)}.kpi .num.good{color:var(--green)}.kpi .num.amber{color:var(--amber)}.kpi .num.blue{color:var(--accent)}
+  .kpi .label{font-family:'Arial',sans-serif;font-size:11.5px;color:var(--ink-light);line-height:1.4}
+  .section{margin-bottom:56px}
+  .section-label{font-family:'Arial',sans-serif;font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-light);margin-bottom:6px}
+  h2.section-title{font-size:22px;font-weight:normal;letter-spacing:-.01em;margin-bottom:22px;padding-bottom:14px;border-bottom:1px solid var(--border)}
+  .finding{background:var(--white);border:1px solid var(--border);border-radius:8px;margin-bottom:20px;overflow:hidden}
+  .finding-header{display:flex;align-items:flex-start;gap:16px;padding:22px 24px 18px;border-bottom:1px solid var(--border)}
+  .finding-number{font-family:'Arial',sans-serif;font-size:11px;font-weight:700;color:var(--white);background:var(--ink);border-radius:4px;padding:3px 7px;flex-shrink:0;margin-top:2px}
+  .finding-title{font-size:16.5px;font-weight:normal;line-height:1.35}
+  .finding-body{padding:20px 24px}
+  .finding-body p{font-size:14.5px;margin-bottom:12px}
+  .finding-body p:last-child{margin-bottom:0}
+  .finding-body img{width:100%;height:auto;border:1px solid var(--border);border-radius:6px;margin:6px 0 14px;background:#fff}
+  .impact-block{border-radius:6px;padding:16px 18px;margin-top:14px;margin-bottom:14px}
+  .impact-block.red{background:var(--warn-dim);border-left:3px solid var(--warn)}
+  .impact-block.green{background:var(--green-dim);border-left:3px solid var(--green)}
+  .impact-block.amber{background:var(--amber-dim);border-left:3px solid var(--amber)}
+  .impact-block.blue{background:var(--accent-dim);border-left:3px solid var(--accent)}
+  .impact-label{font-family:'Arial',sans-serif;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;margin-bottom:6px}
+  .impact-block.red .impact-label{color:var(--warn)}.impact-block.green .impact-label{color:var(--green)}
+  .impact-block.amber .impact-label{color:var(--amber)}.impact-block.blue .impact-label{color:var(--accent)}
+  .impact-block p{font-size:14px;line-height:1.6;margin:0}
+  .data-table-wrap{overflow-x:auto;margin:16px 0}
+  table{width:100%;border-collapse:collapse;font-family:'Arial',sans-serif;font-size:13px}
+  th{background:var(--ink);color:var(--white);text-align:left;padding:9px 12px;font-weight:600;font-size:12px;letter-spacing:.04em}
+  td{padding:9px 12px;border-bottom:1px solid var(--border)}
+  tr:last-child td{border-bottom:none}
+  tr:nth-child(even) td{background:var(--bg)}
+  .neg{color:var(--warn);font-weight:700}.pos{color:var(--green);font-weight:700}
+  .rec-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+  .rec-card{background:var(--white);border:1px solid var(--border);border-radius:8px;padding:20px}
+  .rec-priority{font-family:'Arial',sans-serif;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;margin-bottom:8px}
+  .rec-priority.p1{color:var(--warn)}.rec-priority.p2{color:var(--amber)}.rec-priority.p3{color:var(--accent)}
+  .rec-card h3{font-size:15px;font-weight:normal;margin-bottom:10px;line-height:1.3}
+  .rec-card p{font-size:13.5px;color:var(--ink-light);line-height:1.6;margin-bottom:10px}
+  .rec-card p:last-child{margin-bottom:0}
+  .rec-impact{font-family:var(--mono);font-size:12px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px 10px;color:var(--ink);margin-top:10px}
+  pre{font-family:var(--mono);font-size:12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:14px 16px;overflow-x:auto;line-height:1.55;white-space:pre-wrap}
+  footer{border-top:1px solid var(--border);padding-top:28px;margin-top:64px;font-family:'Arial',sans-serif;font-size:12.5px;color:var(--ink-light);display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px}
+  @media print{.kpi,.rec-card,.impact-block,img,tr,.exec-summary{break-inside:avoid}.finding-header{break-after:avoid}}
+  @media(max-width:600px){.exec-summary{padding:20px 18px}.finding-header,.finding-body{padding:16px}}
+  .model-stat{display:inline-block;font-family:var(--mono);font-size:12px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:4px 10px;margin:3px 4px 3px 0}
+</style>
+</head>
+<body>
+<header><div class="page-wrap"><p class="eyebrow">B2B Sales Analytics · Lead Funnel</p>
+<h1>Paid and organic search bring in the deals.<br><em>Social brings in leads that rarely sign.</em></h1>
+<div class="meta"><span>Julian Batto-Hokson</span><span>8,000 real MQLs · 842 signed sellers · Jun 2017 to Nov 2018</span><span>Python · SQL · dbt · DuckDB · Streamlit · CrewAI</span><span>October 2026</span></div></div></header>
+<nav class="sticky-nav"><div class="page-wrap"><a href="#summary">Summary</a><a href="#findings">Findings</a><a href="#simulator">Simulator</a><a href="#agent">AI Analyst</a><a href="#nextsteps">Next Steps</a><a href="#data">Data</a></div></nav>
+<div class="page-wrap">
+
+<div class="status-banner" style="margin-top:32px;background:var(--amber-dim);border:1px solid var(--amber);border-radius:6px;padding:14px 18px;font-family:Arial,sans-serif;font-size:13px;color:var(--amber)"><strong>Scope note:</strong> this is Olist's real seller-acquisition funnel. It records every marketing-qualified lead (MQL) and every lead that signed, but no deal amounts, pipeline stages or quotas. It can measure conversion and speed. It can't measure pipeline dollars, and because SDRs and closers are only recorded on won deals, it can't give a conversion rate per rep.</div>
+<section id="summary" class="exec-summary">
+  <h2>Executive Summary</h2>
+  <p>Olist is a Brazilian marketplace that signs up merchants to sell through it. I modeled its published B2B funnel, 8,000 MQLs from June 2017 to May 2018 and the 842 that signed, into a dbt star schema on DuckDB, then built a Streamlit dashboard, a lead mix simulator and a local AI analyst on top.</p>
+  <p>Overall, 10.5% of MQLs signed, and the median deal closed 14 days after first contact. That headline hides a ramp: 2017 leads converted at 3.1% and waited a median of 216 days, while 2018 leads converted at 13.0% in 12.5 days. The sales team only started closing in December 2017.</p>
+  <p>Paid search (12.3%) and organic search (11.8%) convert above average and supply 48% of all MQLs. Social supplies 17% of MQLs but converts at 5.6%, and email at 3.0%. Their 95% intervals sit entirely below search's, so the gap isn't noise. In the simulator, moving 10 points of monthly volume from social to paid search adds about 10 deals a month at 2018 rates.</p>
+</section>
+<div class="kpi-strip"><div class="kpi"><div class="num blue">10.5%</div><div class="label">MQL-to-deal conversion (842 of 8,000)</div></div><div class="kpi"><div class="num blue">14 days</div><div class="label">Median first contact to signed</div></div><div class="kpi"><div class="num good">13.0%</div><div class="label">2018 lead conversion, vs 3.1% for 2017 leads</div></div><div class="kpi"><div class="num good">12.3%</div><div class="label">Paid search conversion, best real channel</div></div><div class="kpi"><div class="num warn">5.6%</div><div class="label">Social conversion on 17% of MQL volume</div></div><div class="kpi"><div class="num amber">17%</div><div class="label">Deals sourced by the top SDR (1 of 32)</div></div></div>
+
+<section id="findings" class="section">
+  <p class="section-label">Analysis</p>
+  <h2 class="section-title">What the data shows</h2>
+
+  <div class="finding"><div class="finding-header"><span class="finding-number">01</span><span class="finding-title">Search converts, social and email don't</span></div><div class="finding-body">
+  <img src="outputs/chart1_conversion_by_source.png" alt="Conversion by lead source with 95% intervals">
+  <div class="data-table-wrap"><table><thead><tr><th>Lead source</th><th>MQLs</th><th>Deals</th><th>Conversion</th><th>95% interval</th><th>Share of MQLs</th><th>Median days to close</th></tr></thead><tbody>
+  <tr><td>paid_search</td><td>1,586</td><td>195</td><td><span class="pos">12.3%</span></td><td>10.8% to 14.0%</td><td>19.8%</td><td>15</td></tr>
+  <tr><td>organic_search</td><td>2,296</td><td>271</td><td><span class="pos">11.8%</span></td><td>10.6% to 13.2%</td><td>28.7%</td><td>14.5</td></tr>
+  <tr><td>direct_traffic</td><td>499</td><td>56</td><td>11.2%</td><td>8.7% to 14.3%</td><td>6.2%</td><td>10</td></tr>
+  <tr><td>referral</td><td>284</td><td>24</td><td>8.5%</td><td>5.7% to 12.3%</td><td>3.6%</td><td>18.5</td></tr>
+  <tr><td>social</td><td>1,350</td><td>75</td><td><span class="neg">5.6%</span></td><td>4.5% to 6.9%</td><td>16.9%</td><td>30</td></tr>
+  <tr><td>email</td><td>493</td><td>15</td><td><span class="neg">3.0%</span></td><td>1.9% to 5.0%</td><td>6.2%</td><td>21</td></tr>
+  <tr><td>unknown (no source recorded)</td><td>1,159</td><td>193</td><td>16.7%</td><td>14.6% to 18.9%</td><td>14.5%</td><td>11</td></tr>
+  </tbody></table></div>
+  <p>Display, other_publicities and other (333 MQLs combined) are left out of the table: their intervals are too wide to say much. The full table is in <code>outputs/summary_by_lead_source.csv</code>.</p>
+  <img src="outputs/chart2_mql_mix_vs_deal_mix.png" alt="Share of MQLs vs share of deals by source">
+  <div class="impact-block green"><p class="impact-label">Interpretation</p><p>Social generates 16.9% of leads but only 8.9% of deals. Organic search does the opposite: 28.7% of leads and 32.2% of deals. Social leads also take twice as long to sign when they do (median 30 days vs 14.5). The intervals are computed with the Wilson method in a dbt macro, so a small source can't look like a winner by luck.</p></div>
+  <div class="impact-block amber"><p class="impact-label">Data-quality flag, not a channel</p><p>The best-converting group is leads with no recorded source (16.7%). That could mean sales-sourced leads were never tagged. It's shown, but I don't recommend acting on it until someone finds out where those leads come from.</p></div>
+  </div></div>
+
+  <div class="finding"><div class="finding-header"><span class="finding-number">02</span><span class="finding-title">The funnel only started working in December 2017</span></div><div class="finding-body">
+  <img src="outputs/chart3_conversion_by_cohort.png" alt="Conversion by month of first contact">
+  <div class="data-table-wrap"><table><thead><tr><th>Lead year</th><th>MQLs</th><th>Deals</th><th>Conversion</th><th>Median days to close</th></tr></thead><tbody>
+  <tr><td>2017 (Jun to Dec)</td><td>2,002</td><td>61</td><td><span class="neg">3.1%</span></td><td>216</td></tr>
+  <tr><td>2018 (Jan to May)</td><td>5,998</td><td>781</td><td><span class="pos">13.0%</span></td><td>12.5</td></tr>
+  </tbody></table></div>
+  <img src="outputs/chart4_days_to_close_by_cohort.png" alt="Median days to close by cohort">
+  <div class="impact-block blue"><p class="impact-label">Why this matters for every other number</p><p>No deal closed before 2017-12-05. Leads from mid-2017 sat for months until a sales team existed to call them, so they convert worse and close slower for reasons unrelated to their source. Any channel or rep comparison that mixes 2017 and 2018 is distorted. The dashboard has a "2018 leads" filter and the simulator uses 2018 rates only.</p></div>
+  <div class="impact-block amber"><p class="impact-label">Censoring handled</p><p>The 90-day line only appears for cohorts where every lead was at least 90 days old at the as-of date (2018-11-14). The May 2018 cohort's 180-day rate is left blank for the same reason. Without these window flags, young cohorts look worse than they are.</p></div>
+  </div></div>
+
+  <div class="finding"><div class="finding-header"><span class="finding-number">03</span><span class="finding-title">Two-thirds of won deals sign within a month</span></div><div class="finding-body">
+  <img src="outputs/chart5_days_to_close_distribution.png" alt="Distribution of days to close">
+  <p>554 of 842 won deals (66%) signed within 30 days of first contact. The median is 14 days, but the mean is 48.5 because of the 2017 backlog. One deal is dated 2 days before its first contact. It's flagged and excluded from cycle metrics, and a dbt test enforces that.</p>
+  <div class="impact-block green"><p class="impact-label">What this suggests</p><p>Among 2018 leads, 551 of 781 wins (71%) came within 30 days, and 144 (18%) came after day 60. Most of the value is in fast follow-up. Whether late chasing is worth SDR time is a question to test, since 18% of wins is not nothing.</p></div>
+  </div></div>
+
+  <div class="finding"><div class="finding-header"><span class="finding-number">04</span><span class="finding-title">Rep output is concentrated in one SDR and one closer</span></div><div class="finding-body">
+  <img src="outputs/chart6_rep_output.png" alt="Deals won by SDR and closer">
+  <p>SDR 14 sourced 140 deals (16.6%) and Rep 08 closed 133 (15.8%), across 32 SDRs and 22 closers. IDs in the source data are anonymized hashes; the readable labels are assigned in dbt.</p>
+  <div class="impact-block amber"><p class="impact-label">What this can and can't say</p><p>These are volume and speed, not performance. Reps are only recorded on won deals, so a rep with many wins might also have many losses. A real CRM with rep ownership on every lead would allow per-rep conversion.</p></div>
+  </div></div>
+
+  <div class="finding"><div class="finding-header"><span class="finding-number">05</span><span class="finding-title">Home decor and health and beauty sellers sign most often</span></div><div class="finding-body">
+  <img src="outputs/chart7_segments.png" alt="Won deals by business segment">
+  <p>Home decor (105 deals, median 13 days) and health and beauty (93, median 12) lead. Audio and video electronics sellers are slower (64 deals, median 22 days). Only 45 of 842 deals have a declared monthly revenue, so seller size isn't analyzed.</p>
+  </div></div>
+</section>
+
+<section id="simulator" class="section">
+  <p class="section-label">Planning Tool</p>
+  <h2 class="section-title">Lead mix simulator</h2>
+  <p style="font-size:15px;margin-bottom:16px">Expected deals = planned MQLs from each source × that source's 2018 conversion rate. The low and high bounds use each source's 95% interval. With no levers moved at the historical volume, it reproduces the 842 actual deals exactly (a test checks this).</p>
+  <div class="data-table-wrap"><table><thead><tr><th>Scenario (1,200 MQLs a month, 2018 average)</th><th>Expected deals / month</th><th>Planning range</th><th>Blended conversion</th></tr></thead><tbody>
+  <tr><td>Baseline: 2018 mix</td><td>156.3</td><td>132.5 to 185.9</td><td>13.0%</td></tr>
+  <tr><td>Move 10 points of volume from social to paid search</td><td><span class="pos">166.5</span></td><td>142.0 to 196.8</td><td>13.9%</td></tr>
+  <tr><td>Lift every source's conversion by 10% (faster follow-up)</td><td><span class="pos">171.9</span></td><td>145.8 to 204.5</td><td>14.3%</td></tr>
+  </tbody></table></div>
+  <div class="impact-block blue"><p class="impact-label">Read it as a planning band</p><p>The range assumes every source lands at its bound at once, so it's wide on purpose. It also assumes extra paid search spend buys leads that convert like today's, which gets less true as spend scales.</p></div>
+</section>
+
+<section id="agent" class="section">
+  <p class="section-label">Local AI</p>
+  <h2 class="section-title">A free AI analyst that has to show its SQL</h2>
+  <p style="font-size:15px;margin-bottom:12px">The dashboard's copilot is a CrewAI agent running on a local Ollama model (llama3.2, 3B), so it has no API cost. It answers by writing SQL against the marts. Every query and result is shown next to the answer, and a fact checker flags any number in the prose that didn't come from a query result.</p>
+  <div class="data-table-wrap"><table><thead><tr><th>Question (live test, llama3.2)</th><th>SQL</th><th>Answer</th><th>Caught by guardrails?</th></tr></thead><tbody>
+  <tr><td>Which lead source converts best?</td><td>Correct</td><td><span class="pos">Right</span>: unknown, 0.17</td><td>n/a</td></tr>
+  <tr><td>What share of MQLs became deals?</td><td>Ran, wrong column</td><td><span class="neg">Wrong</span>: called each source's share of leads its "conversion rate"</td><td><span class="neg">No</span>: the numbers exist in the result, so the fact check passed them</td></tr>
+  <tr><td>Which SDR closed the most deals, and how fast?</td><td>12 failed queries</td><td><span class="neg">Wrong</span>: right SDR, invented counts (120 deals vs 140)</td><td><span class="pos">Yes</span>: marked ungrounded after a retry, 3 invented figures flagged</td></tr>
+  <tr><td>Median days to close by segment?</td><td>Correct</td><td><span class="pos">Right</span> values, but listed most of them without segment names</td><td>n/a</td></tr>
+  </tbody></table></div>
+  <div class="impact-block amber"><p class="impact-label">What the live test shows</p><p>A free 3B model gets simple questions right and fails in two different ways on the rest. When its SQL fails, the guardrails catch it: the answer is marked ungrounded and every invented number is listed. When its SQL works but it misreads a column, nothing catches it, because every number it quotes is real. That second failure is why the app always shows the query and result table next to the prose. The unedited log is in <code>docs/live_eval_llama3.2_2026-10-20.txt</code>.</p></div>
+  
+  <div class="data-table-wrap"><table><thead><tr><th>Guardrail</th><th>How it's enforced</th></tr></thead><tbody>
+  <tr><td>Read-only</td><td>DuckDB's parser must see exactly one SELECT; the connection is read-only and blocks reading local files</td></tr>
+  <tr><td>Bounded</td><td>200-row cap and a 15-second timeout per query</td></tr>
+  <tr><td>Grounded</td><td>Answers with no successful query are retried once, then flagged</td></tr>
+  <tr><td>Fact-checked</td><td>Numbers in the answer that match no query result are listed under the answer</td></tr>
+  </tbody></table></div>
+</section>
+
+<section id="nextsteps" class="section">
+  <p class="section-label">Next Steps</p>
+  <h2 class="section-title">What I'd recommend, and what I'd test first</h2>
+  <div class="rec-grid">
+    <div class="rec-card"><p class="rec-priority p1">Channel mix</p><h3>Shift budget from social toward paid search, in steps</h3><p>Social converts at half the average. Move spend in 5-point steps and check that new paid search leads still convert near 14.8% (their 2018 rate).</p><div class="rec-impact">Simulator: +10 points to paid search ≈ +10 deals / month</div></div>
+    <div class="rec-card"><p class="rec-priority p1">Data</p><h3>Find out what "unknown" source leads are</h3><p>1,159 leads with no source convert best of all. If they're referrals or sales-sourced, that channel deserves investment, but it's invisible today.</p><div class="rec-impact">Audit lead capture for the 1,099 tagged "unknown" and 60 blank</div></div>
+    <div class="rec-card"><p class="rec-priority p2">Process</p><h3>Test a 60-day follow-up cutoff</h3><p>71% of 2018 wins closed inside 30 days, 18% after day 60. Split leads older than 60 days into "keep chasing" and "recycle" groups and compare.</p><div class="rec-impact">Track: wins after day 60 per SDR hour spent</div></div>
+    <div class="rec-card"><p class="rec-priority p3">Measurement</p><h3>Record the SDR on every lead, not just wins</h3><p>Without it, rep coaching relies on volume. With it, per-rep conversion and speed become measurable.</p><div class="rec-impact">One field added at lead assignment</div></div>
+  </div>
+</section>
+
+<section id="data" class="section">
+  <p class="section-label">Technical Reference</p>
+  <h2 class="section-title">Data and pipeline</h2>
+  <div class="data-table-wrap"><table><thead><tr><th>Dimension</th><th>Value</th></tr></thead><tbody>
+  <tr><td>Source</td><td><a href="https://www.kaggle.com/datasets/olistbr/marketing-funnel-olist">Marketing Funnel by Olist</a> (Kaggle, CC BY-NC-SA 4.0), real and anonymized</td></tr>
+  <tr><td>Rows</td><td>8,000 MQLs (first contact 2017-06-14 to 2018-05-31); 842 closed deals (2017-12-05 to 2018-11-14)</td></tr>
+  <tr><td>Not included</td><td>Deal amounts, pipeline stages, activity logs, quotas, reps on lost leads</td></tr>
+  <tr><td>Pipeline</td><td>Hash-verified fetch → typed DuckDB load with integrity checks (rolls back on any failure) → dbt staging and marts</td></tr>
+  <tr><td>Marts</td><td>fct_lead_funnel, agg_lead_source_conversion, agg_cohort_conversion, dim_sdrs, dim_sales_reps, agg_segment_summary, agg_landing_page_conversion, dim_date</td></tr>
+  <tr><td>Testing</td><td>62 dbt checks including 7 reconciliation tests; 125 pytest tests; GitHub Actions CI; full rebuild run 3 times with identical table hashes</td></tr>
+  <tr><td>Tools</td><td>Python (pandas), SQL, dbt-duckdb, DuckDB, Streamlit, Plotly, Matplotlib, CrewAI, Ollama, pytest</td></tr>
+  </tbody></table></div>
+</section>
+</div>
+<footer style="max-width:860px;margin:0 auto;padding:0 24px 48px"><span>Julian Batto-Hokson · October 2026</span><span><a href="https://github.com/jbattohokson/B2B_CRM_Pipeline">GitHub Repository</a> · dbt · DuckDB · Streamlit · CrewAI</span></footer>
+</body></html>
