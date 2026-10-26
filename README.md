@@ -89,6 +89,10 @@ Python (pandas), DuckDB, dbt-duckdb, SQL, Streamlit, Plotly, CrewAI, Ollama (lla
 
 **CI:** `.github/workflows/ci.yml` runs on every push and pull request: verify hashes → load → `dbt build` → `pytest -q`. It needs no secrets and no Ollama.
 
+## About
+
+Lead-funnel analytics on Olist's real B2B sales data (8,000 leads, 842 signed deals, 10.5% conversion). A dbt-duckdb star schema with 62 data checks powers a Streamlit dashboard, a lead-mix simulator and a local AI copilot that answers funnel questions with SQL. Python · SQL · dbt.
+
 ## License
 
 Code: MIT (see `LICENSE`). Data in `data/raw/`: CC BY-NC-SA 4.0, by Olist.
